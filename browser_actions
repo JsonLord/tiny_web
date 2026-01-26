@@ -1,1031 +1,226 @@
-Human‑Behaviour Browser Action Policy
-All browser interactions must mimic realistic human behaviour.
-Every action—navigation, clicking, scrolling, filling forms, extracting content, or executing scripts—must follow these constraints:
 
-1. Timing & Pace
-Insert natural, non‑uniform delays between actions.
-
-Avoid machine‑perfect timing (e.g., no constant 0.2s intervals).
-
-Use human‑like ranges such as:
-
-Short pauses: 300–900ms
-
-Thinking pauses: 1.2–3.5s
-
-Occasional long pauses: 4–8s
-
-2. Mouse Behaviour
-Mouse movements must be:
-
-Curved, not linear
-
-Variable in speed
-
-With slight overshoot or micro‑corrections
-
-No teleporting the cursor directly onto elements.
-
-3. Scrolling Behaviour
-Scroll in small increments, not full jumps.
-
-Use momentum‑based scrolling (accelerate → glide → decelerate).
-
-Occasionally scroll past the target and adjust back up.
-
-4. Navigation Behaviour
-Do not instantly interact after page load.
-
-Wait for visible content to settle.
-
-Occasionally hover over elements before clicking.
-
-5. Form Interaction
-Typing must be:
-
-Character‑by‑character
-
-With variable speed
-
-With occasional micro‑pauses
-
-Optional: introduce rare backspaces to simulate correction.
-
-6. Page Exploration
-When using actions like:
-
-/browse_and_extract
-
-/get_html_source
-
-/extract_all_links
-
-/get_page_info
-
-/monitor_network_requests
-
-…ensure the agent:
-
-Scrolls through the page before extracting
-
-Pauses to “read” sections
-
-Interacts only with visible elements
-
-Avoids rapid-fire requests
-
-7. Click & Hover Actions
-For:
-
-/click
-
-/hover_element
-
-/press_key
-
-/wait_for_element
-
-…apply:
-
-Hover before clicking
-
-Slight movement jitter
-
-Occasional hesitation before action
-
-8. Screenshot Behaviour
-For /screenshot:
-
-Take screenshots only after a natural viewing delay
-
-Optionally scroll slightly before capturing
-
-Avoid capturing instantly after navigation
-
-9. JavaScript Execution
-For /execute_js:
-
-Only run JS that a human could plausibly trigger indirectly
-
-Avoid rapid repeated JS calls
-
-Avoid full‑page DOM dumps unless preceded by human‑like exploration
-
-10. Network & Console Monitoring
-For:
-
-/monitor_network_requests
-
-/get_console_logs
-
-…simulate:
-
-Staying on the page for the duration
-
-Occasional scrolls or hovers during monitoring
-
-1. Install the python client (docs) if you don't already have it installed.
-
-copy
-$ pip install gradio_client
-2. Find the API endpoint below corresponding to your desired function in the app. Copy the code snippet, replacing the placeholder values with your own input data. If this is a private Space, you may need to pass your Hugging Face token as well (read more). Or use the 
-API Recorder
-
- to automatically generate your API requests.
-
-API name: /browse_and_extract Browse URL and extract text from selector
-copy
+```python
 from gradio_client import Client
-
 client = Client("diamond-in/Browser-Use-mcp")
+```
+
+---
+
+# 1. **/browse_and_extract**  
+_Read visible text from a page (like a human reading a section)._
+
+### Parameters
+- `url` (str)
+- `selector` (str)
+- `use_persistent` (bool)
+
+### Code Snippet
+```python
 result = client.predict(
-	url="https://example.com",
-	selector="body",
-	use_persistent=False,
-	api_name="/browse_and_extract"
+    url="https://example.com",
+    selector="body",
+    use_persistent=False,
+    api_name="/browse_and_extract"
 )
 print(result)
-Accepts 3 parameters:
-url str Default: "https://example.com"
+```
 
-The input value that is provided in the "URL" Textbox component.
+---
 
-selector str Default: "body"
+# 2. **/screenshot**  
+_Take a screenshot (like a human capturing the screen)._
 
-The input value that is provided in the "CSS Selector" Textbox component.
+### Parameters
+- `url` (str)
+- `full_page` (bool)
+- `use_persistent` (bool)
 
-use_persistent bool Default: False
-
-The input value that is provided in the "Use Persistent Browser" Checkbox component.
-
-Returns 1 element
-str
-
-The output value that appears in the "Extracted Text" Textbox component.
-
-API name: /screenshot Take screenshot of URL
-copy
-from gradio_client import Client
-
-client = Client("diamond-in/Browser-Use-mcp")
+### Code Snippet
+```python
 result = client.predict(
-	url="https://example.com",
-	full_page=False,
-	use_persistent=False,
-	api_name="/screenshot"
+    url="https://example.com",
+    full_page=False,
+    use_persistent=False,
+    api_name="/screenshot"
 )
 print(result)
-Accepts 3 parameters:
-url str Default: "https://example.com"
+```
 
-The input value that is provided in the "URL" Textbox component.
+---
 
-full_page bool Default: False
+# 3. **/click**  
+_Click an element (like a human clicking)._
 
-The input value that is provided in the "Full Page Screenshot" Checkbox component.
+### Parameters
+- `url` (str)
+- `selector` (str)
+- `use_persistent` (bool)
 
-use_persistent bool Default: False
-
-The input value that is provided in the "Use Persistent Browser" Checkbox component.
-
-Returns 1 element
-dict(path: str | None (Path to a local file), url: str | None (Publicly available url or base64 encoded image), size: int | None (Size of image in bytes), orig_name: str | None (Original filename), mime_type: str | None (mime type of image), is_stream: bool (Can always be set to False), meta: dict(str, Any))
-
-The output value that appears in the "Screenshot" Image component.
-
-API name: /click Click element on page
-copy
-from gradio_client import Client
-
-client = Client("diamond-in/Browser-Use-mcp")
+### Code Snippet
+```python
 result = client.predict(
-	url="Hello!!",
-	selector="Hello!!",
-	use_persistent=False,
-	api_name="/click"
+    url="https://example.com",
+    selector="#login-button",
+    use_persistent=False,
+    api_name="/click"
 )
 print(result)
-Accepts 3 parameters:
-url str Required
+```
 
-The input value that is provided in the "URL" Textbox component.
+---
 
-selector str Required
+# 4. **/hover_element**  
+_Hover over an element (like moving the mouse over something)._
 
-The input value that is provided in the "CSS Selector" Textbox component.
+### Parameters
+- `url` (str)
+- `selector` (str)
+- `use_persistent` (bool)
 
-use_persistent bool Default: False
-
-The input value that is provided in the "Use Persistent Browser" Checkbox component.
-
-Returns 1 element
-str
-
-The output value that appears in the "Result" Textbox component.
-
-API name: /fill Fill text into form field
-copy
-from gradio_client import Client
-
-client = Client("diamond-in/Browser-Use-mcp")
+### Code Snippet
+```python
 result = client.predict(
-	url="Hello!!",
-	selector="Hello!!",
-	text="Hello!!",
-	use_persistent=False,
-	api_name="/fill"
+    url="https://example.com",
+    selector=".menu-item",
+    use_persistent=False,
+    api_name="/hover_element"
 )
 print(result)
-Accepts 4 parameters:
-url str Required
+```
 
-The input value that is provided in the "URL" Textbox component.
+---
 
-selector str Required
+# 5. **/scroll_page**  
+_Scroll the page (like using a mouse wheel)._
 
-The input value that is provided in the "CSS Selector" Textbox component.
+### Parameters
+- `url` (str)
+- `direction` ("top" | "bottom" | "up" | "down")
+- `pixels` (float)
+- `use_persistent` (bool)
 
-text str Required
-
-The input value that is provided in the "Text to Fill" Textbox component.
-
-use_persistent bool Default: False
-
-The input value that is provided in the "Use Persistent Browser" Checkbox component.
-
-Returns 1 element
-str
-
-The output value that appears in the "Result" Textbox component.
-
-API name: /submit_form Fill and submit a form with multiple fields
-copy
-from gradio_client import Client
-
-client = Client("diamond-in/Browser-Use-mcp")
+### Code Snippet
+```python
 result = client.predict(
-	url="Hello!!",
-	form_data="Hello!!",
-	submit_button="Hello!!",
-	use_persistent=False,
-	api_name="/submit_form"
+    url="https://example.com",
+    direction="down",
+    pixels=500,
+    use_persistent=False,
+    api_name="/scroll_page"
 )
 print(result)
-Accepts 4 parameters:
-url str Required
+```
 
-The input value that is provided in the "URL" Textbox component.
+---
 
-form_data str Required
+# 6. **/fill**  
+_Type text into a field (like a human typing)._
 
-The input value that is provided in the "Form Data" Textbox component.
+### Parameters
+- `url` (str)
+- `selector` (str)
+- `text` (str)
+- `use_persistent` (bool)
 
-submit_button str Required
-
-The input value that is provided in the "Submit Button Selector (optional)" Textbox component.
-
-use_persistent bool Default: False
-
-The input value that is provided in the "Use Persistent Browser" Checkbox component.
-
-Returns 1 element
-str
-
-The output value that appears in the "Result" Textbox component.
-
-API name: /execute_js Execute JavaScript on page
-copy
-from gradio_client import Client
-
-client = Client("diamond-in/Browser-Use-mcp")
+### Code Snippet
+```python
 result = client.predict(
-	url="https://example.com",
-	script="return {title: document.title, url: document.URL, links: document.links.length};",
-	use_persistent=False,
-	api_name="/execute_js"
+    url="https://example.com/login",
+    selector="#email",
+    text="leon@example.com",
+    use_persistent=False,
+    api_name="/fill"
 )
 print(result)
-Accepts 3 parameters:
-url str Default: "https://example.com"
+```
 
-The input value that is provided in the "URL" Textbox component.
+---
 
-script str Default: "return {title: document.title, url: document.URL, links: document.links.length};"
+# 7. **/submit_form**  
+_Submit a form (like clicking a submit button)._
 
-The input value that is provided in the "JavaScript Code" Textbox component.
+### Parameters
+- `url` (str)
+- `form_data` (str)
+- `submit_button` (str)
+- `use_persistent` (bool)
 
-use_persistent bool Default: False
-
-The input value that is provided in the "Use Persistent Browser" Checkbox component.
-
-Returns 1 element
-str
-
-The output value that appears in the "Result" Textbox component.
-
-API name: /get_cookies Get all cookies from current domain
-copy
-from gradio_client import Client
-
-client = Client("diamond-in/Browser-Use-mcp")
+### Code Snippet
+```python
 result = client.predict(
-	url="Hello!!",
-	use_persistent=False,
-	api_name="/get_cookies"
+    url="https://example.com/signup",
+    form_data='{"#email": "leon@example.com", "#password": "123456"}',
+    submit_button="#submit",
+    use_persistent=False,
+    api_name="/submit_form"
 )
 print(result)
-Accepts 2 parameters:
-url str Required
+```
 
-The input value that is provided in the "URL" Textbox component.
+---
 
-use_persistent bool Default: False
+# 8. **/press_key**  
+_Press a keyboard key (like typing or triggering shortcuts)._
 
-The input value that is provided in the "Use Persistent Browser" Checkbox component.
+### Parameters
+- `url` (str)
+- `key` (str)
+- `selector` (str)
+- `use_persistent` (bool)
 
-Returns 1 element
-str
-
-The output value that appears in the "Cookies (JSON)" Textbox component.
-
-API name: /set_cookies Set cookies from JSON string
-copy
-from gradio_client import Client
-
-client = Client("diamond-in/Browser-Use-mcp")
+### Code Snippet
+```python
 result = client.predict(
-	url="Hello!!",
-	cookies_json="Hello!!",
-	use_persistent=False,
-	api_name="/set_cookies"
+    url="https://example.com",
+    key="Enter",
+    selector="body",
+    use_persistent=False,
+    api_name="/press_key"
 )
 print(result)
-Accepts 3 parameters:
-url str Required
+```
 
-The input value that is provided in the "URL" Textbox component.
+---
 
-cookies_json str Required
+# 9. **/wait_for_element**  
+_Wait for something to appear (like waiting for a page to load)._
 
-The input value that is provided in the "Cookies JSON" Textbox component.
+### Parameters
+- `url` (str)
+- `selector` (str)
+- `timeout` (float)
+- `use_persistent` (bool)
 
-use_persistent bool Default: False
-
-The input value that is provided in the "Use Persistent Browser" Checkbox component.
-
-Returns 1 element
-str
-
-The output value that appears in the "Result" Textbox component.
-
-API name: /get_html_source Get full HTML source code of the page Total requests: 1 (100% successful)  |  p50/p90/p99: 15.16 s / 15.16 s / 15.16 s
-copy
-from gradio_client import Client
-
-client = Client("diamond-in/Browser-Use-mcp")
+### Code Snippet
+```python
 result = client.predict(
-	url="https://example.com",
-	use_persistent=False,
-	api_name="/get_html_source"
+    url="https://example.com",
+    selector="#content",
+    timeout=10,
+    use_persistent=False,
+    api_name="/wait_for_element"
 )
 print(result)
-Accepts 2 parameters:
-url str Default: "https://example.com"
+```
 
-The input value that is provided in the "URL" Textbox component.
+---
 
-use_persistent bool Default: False
+# 10. **/get_page_info**  
+_Get high‑level page info (like observing what’s on the page)._
 
-The input value that is provided in the "Use Persistent Browser" Checkbox component.
+### Parameters
+- `url` (str)
+- `use_persistent` (bool)
 
-Returns 1 element
-str
-
-The output value that appears in the "HTML Source Code" Code component.
-
-API name: /save_html_to_file Save HTML source to file
-copy
-from gradio_client import Client
-
-client = Client("diamond-in/Browser-Use-mcp")
+### Code Snippet
+```python
 result = client.predict(
-	url="https://example.com",
-	filename="Hello!!",
-	use_persistent=False,
-	api_name="/save_html_to_file"
+    url="https://example.com",
+    use_persistent=False,
+    api_name="/get_page_info"
 )
 print(result)
-Accepts 3 parameters:
-url str Default: "https://example.com"
+```
 
-The input value that is provided in the "URL" Textbox component.
 
-filename str Required
-
-The input value that is provided in the "Filename (optional)" Textbox component.
-
-use_persistent bool Default: False
-
-The input value that is provided in the "Use Persistent Browser" Checkbox component.
-
-Returns 1 element
-filepath
-
-The output value that appears in the "Saved HTML File" File component.
-
-API name: /close_persistent_driver Close the persistent driver if it exists
-copy
-from gradio_client import Client
-
-client = Client("diamond-in/Browser-Use-mcp")
-result = client.predict(
-	api_name="/close_persistent_driver"
-)
-print(result)
-Accepts 0 parameters:
-Returns 1 element
-str
-
-The output value that appears in the "Status" Textbox component.
-
-API name: /make_http_request Make HTTP request with custom method, headers, and data (like Postman)
-copy
-from gradio_client import Client
-
-client = Client("diamond-in/Browser-Use-mcp")
-result = client.predict(
-	url="https://api.example.com/data",
-	method="GET",
-	headers="{
-  "Content-Type": "application/json",
-  "User-Agent": "MCP-Browser/1.0"
-}",
-	data="{
-  "key": "value"
-}",
-	use_persistent=False,
-	api_name="/make_http_request"
-)
-print(result)
-Accepts 5 parameters:
-url str Default: "https://api.example.com/data"
-
-The input value that is provided in the "URL" Textbox component.
-
-method Literal['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'] Default: "GET"
-
-The input value that is provided in the "Method" Dropdown component.
-
-headers str Default: "{ "Content-Type": "application/json", "User-Agent": "MCP-Browser/1.0" }"
-
-The input value that is provided in the "Headers (JSON or key:value format)" Code component.
-
-data str Default: "{ "key": "value" }"
-
-The input value that is provided in the "Body Data (for POST/PUT/PATCH)" Code component.
-
-use_persistent bool Default: False
-
-The input value that is provided in the "Use Persistent Browser" Checkbox component.
-
-Returns 1 element
-str
-
-The output value that appears in the "Response" Code component.
-
-API name: /export_as_curl Convert HTTP request to cURL command
-copy
-from gradio_client import Client
-
-client = Client("diamond-in/Browser-Use-mcp")
-result = client.predict(
-	method="GET",
-	url="https://api.example.com/data",
-	headers="{
-  "Content-Type": "application/json",
-  "User-Agent": "MCP-Browser/1.0"
-}",
-	data="{
-  "key": "value"
-}",
-	api_name="/export_as_curl"
-)
-print(result)
-Accepts 4 parameters:
-method Literal['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'] Default: "GET"
-
-The input value that is provided in the "Method" Dropdown component.
-
-url str Default: "https://api.example.com/data"
-
-The input value that is provided in the "URL" Textbox component.
-
-headers str Default: "{ "Content-Type": "application/json", "User-Agent": "MCP-Browser/1.0" }"
-
-The input value that is provided in the "Headers (JSON or key:value format)" Code component.
-
-data str Default: "{ "key": "value" }"
-
-The input value that is provided in the "Body Data (for POST/PUT/PATCH)" Code component.
-
-Returns 1 element
-str
-
-The output value that appears in the "cURL Command" Textbox component.
-
-API name: /get_request_history Get history of HTTP requests
-copy
-from gradio_client import Client
-
-client = Client("diamond-in/Browser-Use-mcp")
-result = client.predict(
-	api_name="/get_request_history"
-)
-print(result)
-Accepts 0 parameters:
-Returns 1 element
-str
-
-The output value that appears in the "Request History" Code component.
-
-API name: /wait_for_element Wait for element to appear on page
-copy
-from gradio_client import Client
-
-client = Client("diamond-in/Browser-Use-mcp")
-result = client.predict(
-	url="Hello!!",
-	selector="Hello!!",
-	timeout=10,
-	use_persistent=False,
-	api_name="/wait_for_element"
-)
-print(result)
-Accepts 4 parameters:
-url str Required
-
-The input value that is provided in the "URL" Textbox component.
-
-selector str Required
-
-The input value that is provided in the "CSS Selector" Textbox component.
-
-timeout float Default: 10
-
-The input value that is provided in the "Timeout (seconds)" Slider component.
-
-use_persistent bool Default: False
-
-The input value that is provided in the "Use Persistent Browser" Checkbox component.
-
-Returns 1 element
-str
-
-The output value that appears in the "Result" Textbox component.
-
-API name: /scroll_page Scroll page in specified direction
-copy
-from gradio_client import Client
-
-client = Client("diamond-in/Browser-Use-mcp")
-result = client.predict(
-	url="Hello!!",
-	direction="bottom",
-	pixels=500,
-	use_persistent=False,
-	api_name="/scroll_page"
-)
-print(result)
-Accepts 4 parameters:
-url str Required
-
-The input value that is provided in the "URL" Textbox component.
-
-direction Literal['bottom', 'top', 'down', 'up'] Default: "bottom"
-
-The input value that is provided in the "Direction" Radio component.
-
-pixels float Default: 500
-
-The input value that is provided in the "Pixels (for up/down)" Number component.
-
-use_persistent bool Default: False
-
-The input value that is provided in the "Use Persistent Browser" Checkbox component.
-
-Returns 1 element
-str
-
-The output value that appears in the "Result" Textbox component.
-
-API name: /hover_element Hover over an element
-copy
-from gradio_client import Client
-
-client = Client("diamond-in/Browser-Use-mcp")
-result = client.predict(
-	url="Hello!!",
-	selector="Hello!!",
-	use_persistent=False,
-	api_name="/hover_element"
-)
-print(result)
-Accepts 3 parameters:
-url str Required
-
-The input value that is provided in the "URL" Textbox component.
-
-selector str Required
-
-The input value that is provided in the "CSS Selector" Textbox component.
-
-use_persistent bool Default: False
-
-The input value that is provided in the "Use Persistent Browser" Checkbox component.
-
-Returns 1 element
-str
-
-The output value that appears in the "Result" Textbox component.
-
-API name: /press_key Press a keyboard key on element
-copy
-from gradio_client import Client
-
-client = Client("diamond-in/Browser-Use-mcp")
-result = client.predict(
-	url="Hello!!",
-	key="Hello!!",
-	selector="body",
-	use_persistent=False,
-	api_name="/press_key"
-)
-print(result)
-Accepts 4 parameters:
-url str Required
-
-The input value that is provided in the "URL" Textbox component.
-
-key str Required
-
-The input value that is provided in the "Key" Textbox component.
-
-selector str Default: "body"
-
-The input value that is provided in the "Target Element" Textbox component.
-
-use_persistent bool Default: False
-
-The input value that is provided in the "Use Persistent Browser" Checkbox component.
-
-Returns 1 element
-str
-
-The output value that appears in the "Result" Textbox component.
-
-API name: /get_page_info Get comprehensive page information
-copy
-from gradio_client import Client
-
-client = Client("diamond-in/Browser-Use-mcp")
-result = client.predict(
-	url="Hello!!",
-	use_persistent=False,
-	api_name="/get_page_info"
-)
-print(result)
-Accepts 2 parameters:
-url str Required
-
-The input value that is provided in the "URL" Textbox component.
-
-use_persistent bool Default: False
-
-The input value that is provided in the "Use Persistent Browser" Checkbox component.
-
-Returns 1 element
-str
-
-The output value that appears in the "Page Information" Textbox component.
-
-API name: /monitor_network_requests Monitor network requests made by a page
-copy
-from gradio_client import Client
-
-client = Client("diamond-in/Browser-Use-mcp")
-result = client.predict(
-	url="https://example.com",
-	duration=5,
-	use_persistent=False,
-	api_name="/monitor_network_requests"
-)
-print(result)
-Accepts 3 parameters:
-url str Default: "https://example.com"
-
-The input value that is provided in the "URL" Textbox component.
-
-duration float Default: 5
-
-The input value that is provided in the "Monitor Duration (seconds)" Slider component.
-
-use_persistent bool Default: False
-
-The input value that is provided in the "Use Persistent Browser" Checkbox component.
-
-Returns 1 element
-str
-
-The output value that appears in the "Network Requests" Code component.
-
-API name: /get_console_logs Capture browser console logs
-copy
-from gradio_client import Client
-
-client = Client("diamond-in/Browser-Use-mcp")
-result = client.predict(
-	url="https://example.com",
-	use_persistent=False,
-	api_name="/get_console_logs"
-)
-print(result)
-Accepts 2 parameters:
-url str Default: "https://example.com"
-
-The input value that is provided in the "URL" Textbox component.
-
-use_persistent bool Default: False
-
-The input value that is provided in the "Use Persistent Browser" Checkbox component.
-
-Returns 1 element
-str
-
-The output value that appears in the "Console Logs" Code component.
-
-API name: /extract_structured_data Extract structured data (JSON-LD, microdata, meta tags) from page
-copy
-from gradio_client import Client
-
-client = Client("diamond-in/Browser-Use-mcp")
-result = client.predict(
-	url="https://example.com",
-	use_persistent=False,
-	api_name="/extract_structured_data"
-)
-print(result)
-Accepts 2 parameters:
-url str Default: "https://example.com"
-
-The input value that is provided in the "URL" Textbox component.
-
-use_persistent bool Default: False
-
-The input value that is provided in the "Use Persistent Browser" Checkbox component.
-
-Returns 1 element
-str
-
-The output value that appears in the "Structured Data (JSON-LD, Meta, OpenGraph)" Code component.
-
-API name: /visual_regression_test Compare two URLs visually for differences
-copy
-from gradio_client import Client
-
-client = Client("diamond-in/Browser-Use-mcp")
-result = client.predict(
-	url1="https://example.com",
-	url2="https://example.com/new",
-	threshold=0.98,
-	api_name="/visual_regression_test"
-)
-print(result)
-Accepts 3 parameters:
-url1 str Default: "https://example.com"
-
-The input value that is provided in the "URL 1" Textbox component.
-
-url2 str Default: "https://example.com/new"
-
-The input value that is provided in the "URL 2" Textbox component.
-
-threshold float Default: 0.98
-
-The input value that is provided in the "Similarity Threshold" Slider component.
-
-Returns 1 element
-str
-
-The output value that appears in the "Visual Comparison Result" Code component.
-
-API name: /accessibility_audit Perform basic accessibility audit on a page
-copy
-from gradio_client import Client
-
-client = Client("diamond-in/Browser-Use-mcp")
-result = client.predict(
-	url="https://example.com",
-	use_persistent=False,
-	api_name="/accessibility_audit"
-)
-print(result)
-Accepts 2 parameters:
-url str Default: "https://example.com"
-
-The input value that is provided in the "URL" Textbox component.
-
-use_persistent bool Default: False
-
-The input value that is provided in the "Use Persistent Browser" Checkbox component.
-
-Returns 1 element
-str
-
-The output value that appears in the "Accessibility Audit Results" Code component.
-
-API name: /check_color_contrast Check color contrast for text elements
-copy
-from gradio_client import Client
-
-client = Client("diamond-in/Browser-Use-mcp")
-result = client.predict(
-	url="https://example.com",
-	use_persistent=False,
-	api_name="/check_color_contrast"
-)
-print(result)
-Accepts 2 parameters:
-url str Default: "https://example.com"
-
-The input value that is provided in the "URL" Textbox component.
-
-use_persistent bool Default: False
-
-The input value that is provided in the "Use Persistent Browser" Checkbox component.
-
-Returns 1 element
-str
-
-The output value that appears in the "Color Contrast Issues" Code component.
-
-API name: /extract_all_links Extract all links from a page with categorization
-copy
-from gradio_client import Client
-
-client = Client("diamond-in/Browser-Use-mcp")
-result = client.predict(
-	url="https://example.com",
-	include_external=True,
-	use_persistent=False,
-	api_name="/extract_all_links"
-)
-print(result)
-Accepts 3 parameters:
-url str Default: "https://example.com"
-
-The input value that is provided in the "URL" Textbox component.
-
-include_external bool Default: True
-
-The input value that is provided in the "Include External Links" Checkbox component.
-
-use_persistent bool Default: False
-
-The input value that is provided in the "Use Persistent Browser" Checkbox component.
-
-Returns 1 element
-str
-
-The output value that appears in the "All Links (Categorized)" Code component.
-
-API name: /seo_analysis Perform SEO analysis on a page
-copy
-from gradio_client import Client
-
-client = Client("diamond-in/Browser-Use-mcp")
-result = client.predict(
-	url="https://example.com",
-	use_persistent=False,
-	api_name="/seo_analysis"
-)
-print(result)
-Accepts 2 parameters:
-url str Default: "https://example.com"
-
-The input value that is provided in the "URL" Textbox component.
-
-use_persistent bool Default: False
-
-The input value that is provided in the "Use Persistent Browser" Checkbox component.
-
-Returns 1 element
-str
-
-The output value that appears in the "SEO Analysis Results" Code component.
-
-API name: /chat_with_gemini Chat with Gemini API
-copy
-from gradio_client import Client
-
-client = Client("diamond-in/Browser-Use-mcp")
-result = client.predict(
-	message="Hello!!",
-	history=[],
-	api_name="/chat_with_gemini"
-)
-print(result)
-Accepts 2 parameters:
-message str Required
-
-The input value that is provided in the "Message" Textbox component.
-
-history tuple[str | dict(file: filepath, alt_text: str | None) | dict(component: str, value: Any, constructor_args: dict(str, Any), props: dict(str, Any)) | None, str | dict(file: filepath, alt_text: str | None) | dict(component: str, value: Any, constructor_args: dict(str, Any), props: dict(str, Any)) | None] Default: []
-
-The input value that is provided in the "parameter_216" Chatbot component. null
-
-Returns tuple of 2 elements
-[0] str
-
-The output value that appears in the "Message" Textbox component.
-
-[1] tuple[str | dict(file: filepath, alt_text: str | None) | dict(component: str, value: Any, constructor_args: dict(str, Any), props: dict(str, Any)) | None, str | dict(file: filepath, alt_text: str | None) | dict(component: str, value: Any, constructor_args: dict(str, Any), props: dict(str, Any)) | None]
-
-The output value that appears in the "value_216" Chatbot component.
-
-API name: /lambda
-copy
-from gradio_client import Client
-
-client = Client("diamond-in/Browser-Use-mcp")
-result = client.predict(
-	api_name="/lambda"
-)
-print(result)
-Accepts 0 parameters:
-Returns 1 element
-str
-
-The output value that appears in the "Message" Textbox component.
-
-API name: /chat_with_gemini_1 Chat with Gemini API
-copy
-from gradio_client import Client
-
-client = Client("diamond-in/Browser-Use-mcp")
-result = client.predict(
-	message="Hello!!",
-	history=[],
-	api_name="/chat_with_gemini_1"
-)
-print(result)
-Accepts 2 parameters:
-message str Required
-
-The input value that is provided in the "Message" Textbox component.
-
-history tuple[str | dict(file: filepath, alt_text: str | None) | dict(component: str, value: Any, constructor_args: dict(str, Any), props: dict(str, Any)) | None, str | dict(file: filepath, alt_text: str | None) | dict(component: str, value: Any, constructor_args: dict(str, Any), props: dict(str, Any)) | None] Default: []
-
-The input value that is provided in the "parameter_216" Chatbot component. null
-
-Returns tuple of 2 elements
-[0] str
-
-The output value that appears in the "Message" Textbox component.
-
-[1] tuple[str | dict(file: filepath, alt_text: str | None) | dict(component: str, value: Any, constructor_args: dict(str, Any), props: dict(str, Any)) | None, str | dict(file: filepath, alt_text: str | None) | dict(component: str, value: Any, constructor_args: dict(str, Any), props: dict(str, Any)) | None]
-
-The output value that appears in the "value_216" Chatbot component.
-
-API name: /lambda_1
-copy
-from gradio_client import Client
-
-client = Client("diamond-in/Browser-Use-mcp")
-result = client.predict(
-	api_name="/lambda_1"
-)
-print(result)
-Accepts 0 parameters:
-Returns 1 element
-str
-
-The output value that appears in the "Message" Textbox component.
-
-API name: /clear_chat Clear chat history
-copy
-from gradio_client import Client
-
-client = Client("diamond-in/Browser-Use-mcp")
-result = client.predict(
-	api_name="/clear_chat"
-)
-print(result)
-Accepts 0 parameters:
-Returns tuple of 2 elements
-[0] str
-
-The output value that appears in the "Message" Textbox component.
-
-[1] tuple[str | dict(file: filepath, alt_text: str | None) | dict(component: str, value: Any, constructor_args: dict(str, Any), props: dict(str, Any)) | None, str | dict(file: filepath, alt_text: str | None) | dict(component: str, value: Any, constructor_args: dict(str, Any), props: dict(str, Any)) | None]
-
-The output value that appears in the "value_216" Chatbot component.
+Just tell me the direction you want to take next.
