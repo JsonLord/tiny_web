@@ -1,3 +1,129 @@
+Human‑Behaviour Browser Action Policy
+All browser interactions must mimic realistic human behaviour.
+Every action—navigation, clicking, scrolling, filling forms, extracting content, or executing scripts—must follow these constraints:
+
+1. Timing & Pace
+Insert natural, non‑uniform delays between actions.
+
+Avoid machine‑perfect timing (e.g., no constant 0.2s intervals).
+
+Use human‑like ranges such as:
+
+Short pauses: 300–900ms
+
+Thinking pauses: 1.2–3.5s
+
+Occasional long pauses: 4–8s
+
+2. Mouse Behaviour
+Mouse movements must be:
+
+Curved, not linear
+
+Variable in speed
+
+With slight overshoot or micro‑corrections
+
+No teleporting the cursor directly onto elements.
+
+3. Scrolling Behaviour
+Scroll in small increments, not full jumps.
+
+Use momentum‑based scrolling (accelerate → glide → decelerate).
+
+Occasionally scroll past the target and adjust back up.
+
+4. Navigation Behaviour
+Do not instantly interact after page load.
+
+Wait for visible content to settle.
+
+Occasionally hover over elements before clicking.
+
+5. Form Interaction
+Typing must be:
+
+Character‑by‑character
+
+With variable speed
+
+With occasional micro‑pauses
+
+Optional: introduce rare backspaces to simulate correction.
+
+6. Page Exploration
+When using actions like:
+
+/browse_and_extract
+
+/get_html_source
+
+/extract_all_links
+
+/get_page_info
+
+/monitor_network_requests
+
+…ensure the agent:
+
+Scrolls through the page before extracting
+
+Pauses to “read” sections
+
+Interacts only with visible elements
+
+Avoids rapid-fire requests
+
+7. Click & Hover Actions
+For:
+
+/click
+
+/hover_element
+
+/press_key
+
+/wait_for_element
+
+…apply:
+
+Hover before clicking
+
+Slight movement jitter
+
+Occasional hesitation before action
+
+8. Screenshot Behaviour
+For /screenshot:
+
+Take screenshots only after a natural viewing delay
+
+Optionally scroll slightly before capturing
+
+Avoid capturing instantly after navigation
+
+9. JavaScript Execution
+For /execute_js:
+
+Only run JS that a human could plausibly trigger indirectly
+
+Avoid rapid repeated JS calls
+
+Avoid full‑page DOM dumps unless preceded by human‑like exploration
+
+10. Network & Console Monitoring
+For:
+
+/monitor_network_requests
+
+/get_console_logs
+
+…simulate:
+
+Staying on the page for the duration
+
+Occasional scrolls or hovers during monitoring
+
 1. Install the python client (docs) if you don't already have it installed.
 
 copy
