@@ -127,6 +127,11 @@ JULES_API_URL = "https://jules.googleapis.com/v1alpha"
 
 # GitHub Client
 gh = Github(GITHUB_TOKEN) if GITHUB_TOKEN else None
+REPO_NAME = "JsonLord/tiny_web"
+
+# Global state for processed reports
+processed_prs = set()
+all_discovered_reports = ""
 
 # Helper for parallel LLM calls
 def call_llm_parallel(client, model_names, messages, **kwargs):
@@ -422,12 +427,50 @@ def pull_report_from_pr(pr_url):
 
         # Fetch the report.md file
         file_path = "user_experience_reports/report.md"
-        file_content = repo.get_contents(file_path, ref=branch_name)
-        return file_content.decoded_content.decode("utf-8")
+        try:
+            file_content = repo.get_contents(file_path, ref=branch_name)
+            content = file_content.decoded_content.decode("utf-8")
+            # Mark as processed
+            processed_prs.add(pr_number)
+            return content
+        except:
+            return "Report not found yet in this branch."
 
     except Exception as e:
         print(f"Error pulling report: {e}")
         return f"Error pulling report: {str(e)}"
+
+def monitor_repo_for_reports():
+    global all_discovered_reports
+    if not gh:
+        return all_discovered_reports
+
+    try:
+        repo = gh.get_repo(REPO_NAME)
+        # List open PRs
+        prs = repo.get_pulls(state='open', sort='created', direction='desc')
+
+        new_content_found = False
+        for pr in prs:
+            if pr.number not in processed_prs:
+                # Check if it has the report
+                try:
+                    file_path = "user_experience_reports/report.md"
+                    file_content = repo.get_contents(file_path, ref=pr.head.ref)
+                    content = file_content.decoded_content.decode("utf-8")
+
+                    processed_prs.add(pr.number)
+                    report_header = f"\n\n## Discovered Report: {pr.title} (PR #{pr.number})\n\n"
+                    all_discovered_reports = report_header + content + "\n\n---\n\n" + all_discovered_reports
+                    new_content_found = True
+                except:
+                    # Report not in this PR or not yet created
+                    continue
+
+        return all_discovered_reports
+    except Exception as e:
+        print(f"Error monitoring repo: {e}")
+        return all_discovered_reports
 
 # Gradio UI
 with gr.Blocks() as demo:
@@ -452,7 +495,16 @@ with gr.Blocks() as demo:
         start_session_btn = gr.Button("Start Jules Session", variant="primary")
 
     with gr.Row():
-        report_output = gr.Markdown(label="Final Reports")
+        with gr.Tab("Active Session Reports"):
+            report_output = gr.Markdown(label="Final Reports")
+        with gr.Tab("Global Repo Feed"):
+            gr.Markdown("### Live Monitoring of JsonLord/tiny_web for new UX reports")
+            refresh_btn = gr.Button("Refresh Feed Now")
+            global_feed = gr.Markdown(value="Waiting for new reports...")
+            # Use a Timer to poll every 60 seconds
+            timer = gr.Timer(value=60)
+            timer.tick(fn=monitor_repo_for_reports, outputs=global_feed)
+            refresh_btn.click(fn=monitor_repo_for_reports, outputs=global_feed)
 
     # Event handlers
     generate_btn.click(
