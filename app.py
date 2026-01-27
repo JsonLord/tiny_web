@@ -128,6 +128,8 @@ JULES_API_URL = "https://jules.googleapis.com/v1alpha"
 # GitHub Client
 gh = Github(GITHUB_TOKEN) if GITHUB_TOKEN else None
 REPO_NAME = "JsonLord/tiny_web"
+POOL_REPO_NAME = "JsonLord/agent-notes"
+POOL_PATH = "PersonaPool"
 
 # Global state for processed reports
 processed_prs = set()
@@ -194,6 +196,114 @@ def get_repo_branches(repo_full_name):
     except Exception as e:
         print(f"Error fetching branches: {e}")
         return ["main"]
+
+def get_persona_pool():
+    if not gh:
+        return []
+    try:
+        repo = gh.get_repo(POOL_REPO_NAME)
+        contents = repo.get_contents(POOL_PATH)
+        pool = []
+        for content_file in contents:
+            if content_file.name.endswith(".json"):
+                file_content = content_file.decoded_content.decode("utf-8")
+                pool.append(json.loads(file_content))
+        return pool
+    except Exception as e:
+        print(f"Error fetching persona pool: {e}")
+        return []
+
+def upload_persona_to_pool(persona_data):
+    if not gh:
+        return
+    try:
+        repo = gh.get_repo(POOL_REPO_NAME)
+        name = persona_data.get("name", "unknown").replace(" ", "_")
+        file_path = f"{POOL_PATH}/{name}.json"
+        content = json.dumps(persona_data, indent=4)
+
+        try:
+            # Check if file exists to get its sha
+            existing_file = repo.get_contents(file_path)
+            repo.update_file(file_path, f"Update persona: {name}", content, existing_file.sha)
+        except:
+            # Create new file
+            repo.create_file(file_path, f"Add persona: {name}", content)
+        print(f"Uploaded persona {name} to pool.")
+    except Exception as e:
+        print(f"Error uploading persona to pool: {e}")
+
+def select_or_create_personas(theme, customer_profile, num_personas):
+    client = get_blablador_client()
+    if not client:
+        return generate_personas(theme, customer_profile, num_personas)
+
+    pool = get_persona_pool()
+    if not pool:
+        print("Pool is empty, generating new personas.")
+        new_personas = generate_personas(theme, customer_profile, num_personas)
+        for p in new_personas:
+            upload_persona_to_pool(p)
+        return new_personas
+
+    # Ask LLM to judge
+    pool_summaries = [{"index": i, "name": p["name"], "minibio": p.get("minibio", "")} for i, p in enumerate(pool)]
+
+    prompt = f"""
+    You are an expert in user experience research and persona management.
+    We need {num_personas} persona(s) for a UX analysis task with the following theme: {theme}
+    And target customer profile: {customer_profile}
+
+    Here is a pool of existing personas:
+    {json.dumps(pool_summaries, indent=2)}
+
+    For each of the {num_personas} required personas, decide if one from the pool is an appropriate match or if we should create a new one.
+    An appropriate match is a persona whose background, interests, and characteristics align well with the target customer profile and theme.
+
+    Return your decision as a JSON object with the following format:
+    {{
+        "decisions": [
+            {{ "action": "use_pool", "pool_index": 0 }},
+            {{ "action": "create_new" }},
+            ... (up to {num_personas})
+        ]
+    }}
+    """
+
+    try:
+        response = client.chat.completions.create(
+            model="alias-large",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        content = response.choices[0].message.content
+        json_match = re.search(r"\{.*\}", content, re.DOTALL)
+        if json_match:
+            decisions_json = json.loads(json_match.group())
+            decisions = decisions_json.get("decisions", [])
+        else:
+            print("Could not parse LLM decision, creating new personas.")
+            decisions = [{"action": "create_new"}] * num_personas
+    except Exception as e:
+        print(f"Error getting LLM decision: {e}, creating new personas.")
+        decisions = [{"action": "create_new"}] * num_personas
+
+    final_personas = []
+    to_create_count = 0
+    for d in decisions:
+        if d["action"] == "use_pool" and 0 <= d["pool_index"] < len(pool):
+            print(f"Using persona from pool: {pool[d['pool_index']]['name']}")
+            final_personas.append(pool[d['pool_index']])
+        else:
+            to_create_count += 1
+
+    if to_create_count > 0:
+        print(f"Creating {to_create_count} new personas.")
+        newly_created = generate_personas(theme, customer_profile, to_create_count)
+        for p in newly_created:
+            upload_persona_to_pool(p)
+            final_personas.append(p)
+
+    return final_personas
 
 def generate_personas(theme, customer_profile, num_personas):
     # Ensure alias-large is used
@@ -268,66 +378,60 @@ def generate_tasks(theme, customer_profile):
     4. Emotional connection to the persona and content/styling
 
     The tasks must be in sequential order.
-    Return the tasks as a JSON list of strings in the format: {{"tasks": ["task1", "task2", ...]}}
+
+    CRITICAL: You MUST return a JSON object with a "tasks" key containing a list of strings.
+    Example: {{"tasks": ["task 1", "task 2", ...]}}
+    Do not include any other text in your response.
     """
 
-    # Try alias-large first, then alias-fast
-    for model_name in ["alias-large", "alias-fast"]:
+    models_to_try = ["alias-large", "alias-huge", "alias-fast"]
+
+    for attempt in range(5):
         try:
-            # Handle potential 502 with wait
-            response = None
-            for attempt in range(3):
-                try:
-                    print(f"Attempting task generation with {model_name}, attempt {attempt+1}")
-                    if attempt > 0:
-                        # Parallel retry after first failure
-                        print("Proxy error occurred previously. Attempting parallel call to alias-large and alias-huge.")
-                        response = call_llm_parallel(client, ["alias-large", "alias-huge"], [{"role": "user", "content": prompt}])
-                        if isinstance(response, Exception):
-                            raise response
-                    else:
-                        response = client.chat.completions.create(
-                            model=model_name,
-                            messages=[{"role": "user", "content": prompt}]
-                        )
-                    break
-                except Exception as e:
-                    print(f"Error during task generation with {model_name}: {e}")
-                    if "502" in str(e) or "Proxy Error" in str(e):
-                        print(f"Waiting 35 seconds before retry...")
-                        time.sleep(35)
-                    else:
-                        # For other errors, don't wait as long but still retry or move on
-                        time.sleep(1)
+            print(f"Attempt {attempt+1} for task generation...")
+            if attempt > 0:
+                print(f"Retrying in parallel with {models_to_try}")
+                # Wait 35s if it's a retry (likely Proxy Error or Rate Limit)
+                time.sleep(35)
+                response = call_llm_parallel(client, models_to_try, [{"role": "user", "content": prompt}])
+            else:
+                response = client.chat.completions.create(
+                    model="alias-large",
+                    messages=[{"role": "user", "content": prompt}]
+                )
 
-            if not response or isinstance(response, Exception):
-                print(f"Failed to get response from {model_name} after all attempts.")
-                continue
+            if response and not isinstance(response, Exception):
+                content = response.choices[0].message.content
+                # Robust extraction
+                json_match = re.search(r"\{.*\}", content, re.DOTALL)
+                if json_match:
+                    try:
+                        tasks_json = json.loads(json_match.group())
+                        tasks = tasks_json.get("tasks", [])
+                        if tasks and isinstance(tasks, list) and len(tasks) >= 5:
+                            return tasks[:10]
+                    except:
+                        pass
 
-            content = response.choices[0].message.content
-            # Extract JSON from content (it might be wrapped in code blocks)
-            json_str = re.search(r"\{.*\}", content, re.DOTALL)
-            if json_str:
-                tasks_json = json.loads(json_str.group())
-                if "tasks" in tasks_json:
-                    return tasks_json["tasks"]
-                elif isinstance(tasks_json, list):
-                    return tasks_json
-                else:
-                    return list(tasks_json.values())[0]
+                # Fallback: try to extract lines that look like tasks
+                lines = [re.sub(r'^\d+[\.\)]\s*', '', l).strip() for l in content.split('\n') if l.strip()]
+                tasks = [l for l in lines if len(l) > 20 and not l.startswith('{') and not l.startswith('`')]
+                if len(tasks) >= 5:
+                    return tasks[:10]
+
+            print(f"Attempt {attempt+1} failed to yield valid tasks.")
         except Exception as e:
-            print(f"Error with model {model_name}: {e}")
-            continue
+            print(f"Error in attempt {attempt+1}: {e}")
 
-    return [f"Task {i+1} for {theme} (Failed to generate)" for i in range(10)]
+    return [f"Task {i+1} for {theme} (Manual fallback)" for i in range(10)]
 
 def handle_generate(theme, customer_profile, num_personas):
     try:
         yield "Generating tasks...", None, None
         tasks = generate_tasks(theme, customer_profile)
 
-        yield "Generating personas...", tasks, None
-        personas = generate_personas(theme, customer_profile, num_personas)
+        yield "Selecting or creating personas...", tasks, None
+        personas = select_or_create_personas(theme, customer_profile, num_personas)
 
         yield "Generation complete!", tasks, personas
     except Exception as e:
