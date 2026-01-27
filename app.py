@@ -1,6 +1,9 @@
 import os
 import sys
 import subprocess
+import re
+import time
+import json
 
 # Logic to clone TinyTroupe on startup if not present
 def clone_tinytroupe():
@@ -11,8 +14,38 @@ def clone_tinytroupe():
             "git", "clone", "-b", "fix/jules-final-submission-branch",
             "https://github.com/JsonLord/TinyTroupe.git", "external/TinyTroupe"
         ])
+        patch_tinytroupe()
     else:
         print("TinyTroupe already present.")
+        patch_tinytroupe()
+
+def patch_tinytroupe():
+    path = "external/TinyTroupe/tinytroupe/openai_utils.py"
+    if os.path.exists(path):
+        with open(path, "r") as f:
+            content = f.read()
+
+        # 1. Ensure alias-large is used (revert any previous fast patches)
+        content = content.replace('"alias-fast"', '"alias-large"')
+
+        # 2. Handle 502 errors on Helmholtz by waiting 35 seconds
+        # Use a more robust regex-based replacement
+        pattern = r"if isinstance\(e, openai\.APIStatusError\) and e\.status_code == 502 and isinstance\(self, HelmholtzBlabladorClient\):.*?except Exception as fallback_e:.*?logger\.error\(f\"Fallback to OpenAI also failed: \{fallback_e\}\"\)"
+
+        new_502_block = """if isinstance(e, openai.APIStatusError) and e.status_code == 502 and isinstance(self, HelmholtzBlabladorClient):
+                    logger.warning("Helmholtz API returned a 502 error. Waiting 35 seconds before retrying...")
+                    time.sleep(35)"""
+
+        new_content = re.sub(pattern, new_502_block, content, flags=re.DOTALL)
+
+        if new_content == content:
+            print("Could not find the 502 block to patch using regex.")
+        else:
+            content = new_content
+
+        with open(path, "w") as f:
+            f.write(content)
+        print("TinyTroupe patched to handle 502 errors with 35s wait and use alias-large.")
 
 clone_tinytroupe()
 
@@ -20,10 +53,7 @@ import gradio as gr
 from github import Github
 import requests
 from openai import OpenAI
-import time
-import json
 import logging
-import re
 
 # Add external/TinyTroupe to sys.path
 TINYTROUPE_PATH = os.path.join(os.getcwd(), "external", "TinyTroupe")
@@ -34,6 +64,7 @@ try:
     import tinytroupe
     from tinytroupe.agent import TinyPerson
     from tinytroupe.factory.tiny_person_factory import TinyPersonFactory
+    from tinytroupe import config_manager
     print("TinyTroupe imported successfully")
 except ImportError as e:
     print(f"Error importing TinyTroupe: {e}")
@@ -82,17 +113,60 @@ def get_repo_branches(repo_full_name):
         return ["main"]
 
 def generate_personas(theme, customer_profile, num_personas):
+    # Ensure alias-large is used
+    config_manager.update("model", "alias-large")
+    config_manager.update("reasoning_model", "alias-large")
+
     context = f"A company related to {theme}. Target customers: {customer_profile}"
-    factory = TinyPersonFactory(context=context)
-    people = factory.generate_people(number_of_people=int(num_personas), verbose=True)
+
+    # Manually define sampling plan if LLM fails to generate one correctly
+    try:
+        factory = TinyPersonFactory(context=context)
+        # Attempt to initialize sampling plan, if it fails or produces 0 samples, we'll manually add one
+        try:
+            factory.initialize_sampling_plan()
+        except:
+            pass
+
+        if not factory.remaining_characteristics_sample or any("sampled_values" not in s for s in factory.remaining_characteristics_sample):
+            print("Sampling plan generation failed or returned invalid samples. Creating manual sample.")
+            factory.remaining_characteristics_sample = [{
+                "name": f"User_{i}",
+                "age": 25 + i,
+                "gender": "unknown",
+                "nationality": "unknown",
+                "occupation": theme,
+                "background": customer_profile
+            } for i in range(int(num_personas))]
+        else:
+            # If it has sampled_values but it's nested (it should be flattened by factory)
+            # Actually, the error shows it's a list of dictionaries that might be errors
+            pass
+
+        people = factory.generate_people(number_of_people=int(num_personas), verbose=True)
+        if not people:
+            print("TinyTroupe generated 0 people. Using fallback.")
+            raise Exception("No people generated.")
+    except Exception as e:
+        print(f"Error in generate_personas: {e}")
+        # Fallback: create dummy people if everything fails
+        personas_data = []
+        for i in range(int(num_personas)):
+            personas_data.append({
+                "name": f"User_{i}",
+                "minibio": f"A simulated user interested in {theme}.",
+                "persona": {"name": f"User_{i}", "occupation": theme, "background": customer_profile}
+            })
+        return personas_data
 
     personas_data = []
-    for person in people:
-        personas_data.append({
-            "name": person.name,
-            "minibio": person.minibio(),
-            "persona": person._persona
-        })
+    if people:
+        for person in people:
+            personas_data.append({
+                "name": person.name,
+                "minibio": person.minibio(),
+                "persona": person._persona
+            })
     return personas_data
 
 def generate_tasks(theme, customer_profile):
@@ -111,27 +185,51 @@ def generate_tasks(theme, customer_profile):
     4. Emotional connection to the persona and content/styling
 
     The tasks must be in sequential order.
-    Return the tasks as a JSON list of strings.
+    Return the tasks as a JSON list of strings in the format: {{"tasks": ["task1", "task2", ...]}}
     """
 
-    response = client.chat.completions.create(
-        model="alias-large",
-        messages=[{"role": "user", "content": prompt}],
-        response_format={"type": "json_object"}
-    )
+    # Try alias-large first, then alias-fast
+    for model_name in ["alias-large", "alias-fast"]:
+        try:
+            # Handle potential 502 with wait
+            response = None
+            for attempt in range(3):
+                try:
+                    print(f"Attempting task generation with {model_name}, attempt {attempt+1}")
+                    response = client.chat.completions.create(
+                        model=model_name,
+                        messages=[{"role": "user", "content": prompt}]
+                    )
+                    break
+                except Exception as e:
+                    print(f"Error during task generation with {model_name}: {e}")
+                    if "502" in str(e) or "Proxy Error" in str(e):
+                        print(f"Waiting 35 seconds before retry...")
+                        time.sleep(35)
+                    else:
+                        # For other errors, don't wait as long but still retry or move on
+                        time.sleep(1)
 
-    try:
-        content = response.choices[0].message.content
-        tasks_json = json.loads(content)
-        if "tasks" in tasks_json:
-            return tasks_json["tasks"]
-        elif isinstance(tasks_json, list):
-            return tasks_json
-        else:
-            return list(tasks_json.values())[0]
-    except Exception as e:
-        print(f"Error parsing tasks: {e}")
-        return [f"Task {i+1} for {theme}" for i in range(10)]
+            if not response:
+                print(f"Failed to get response from {model_name} after all attempts.")
+                continue
+
+            content = response.choices[0].message.content
+            # Extract JSON from content (it might be wrapped in code blocks)
+            json_str = re.search(r"\{.*\}", content, re.DOTALL)
+            if json_str:
+                tasks_json = json.loads(json_str.group())
+                if "tasks" in tasks_json:
+                    return tasks_json["tasks"]
+                elif isinstance(tasks_json, list):
+                    return tasks_json
+                else:
+                    return list(tasks_json.values())[0]
+        except Exception as e:
+            print(f"Error with model {model_name}: {e}")
+            continue
+
+    return [f"Task {i+1} for {theme} (Failed to generate)" for i in range(10)]
 
 def handle_generate(theme, customer_profile, num_personas):
     try:
@@ -145,7 +243,10 @@ def handle_generate(theme, customer_profile, num_personas):
     except Exception as e:
         yield f"Error during generation: {str(e)}", None, None
 
-def start_and_monitor_sessions(repo_name, branch_name, personas, tasks, url):
+def start_and_monitor_sessions(personas, tasks, url):
+    repo_name = "JsonLord/tiny_web"
+    branch_name = "main"
+
     if not JULES_API_KEY:
         yield "Error: JULES_API_KEY not set.", ""
         return
@@ -253,10 +354,6 @@ with gr.Blocks() as demo:
             num_personas_input = gr.Number(label="Number of Personas", value=1, precision=0)
             url_input = gr.Textbox(label="Target URL", value="https://example.com")
 
-            repo_selector = gr.Dropdown(label="GitHub Repository", choices=get_user_repos(), value="JsonLord/tiny_web")
-            branch_selector = gr.Dropdown(label="Branch", choices=["main"], value="main")
-
-            repo_selector.change(fn=get_repo_branches, inputs=repo_selector, outputs=branch_selector)
 
             generate_btn = gr.Button("Generate Personas & Tasks")
 
@@ -280,7 +377,7 @@ with gr.Blocks() as demo:
 
     start_session_btn.click(
         fn=start_and_monitor_sessions,
-        inputs=[repo_selector, branch_selector, persona_display, task_list_display, url_input],
+        inputs=[persona_display, task_list_display, url_input],
         outputs=[status_output, report_output]
     )
 
