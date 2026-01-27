@@ -4,6 +4,7 @@ import subprocess
 import re
 import time
 import json
+import concurrent.futures
 
 # Logic to clone TinyTroupe on startup if not present
 def clone_tinytroupe():
@@ -25,27 +26,75 @@ def patch_tinytroupe():
         with open(path, "r") as f:
             content = f.read()
 
-        # 1. Ensure alias-large is used (revert any previous fast patches)
+        # 1. Import concurrent.futures and add parallel helper to the class
+        if "import concurrent.futures" not in content:
+            content = "import concurrent.futures\n" + content
+
+        # Add the parallel helper to OpenAIClient
+        parallel_helper = """
+    def _raw_model_call_parallel(self, model_names, chat_api_params):
+        def make_call(m_name):
+            try:
+                p = chat_api_params.copy()
+                p["model"] = m_name
+                # Adjust for reasoning models if needed
+                if self._is_reasoning_model(m_name):
+                    if "max_tokens" in p:
+                        p["max_completion_tokens"] = p.pop("max_tokens")
+                    p.pop("temperature", None)
+                    p.pop("top_p", None)
+                    p.pop("frequency_penalty", None)
+                    p.pop("presence_penalty", None)
+                    p.pop("stream", None)
+
+                return self.client.chat.completions.create(**p)
+            except Exception as e:
+                return e
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(model_names)) as executor:
+            futures = {executor.submit(make_call, m): m for m in model_names}
+            for future in concurrent.futures.as_completed(futures):
+                res = future.result()
+                if not isinstance(res, Exception):
+                    return res
+        return Exception("All parallel calls failed")
+"""
+        if "_raw_model_call_parallel" not in content:
+            content = content.replace("class OpenAIClient:", "class OpenAIClient:" + parallel_helper)
+
+        # 2. Ensure alias-large is used (revert any previous fast patches)
         content = content.replace('"alias-fast"', '"alias-large"')
 
-        # 2. Handle 502 errors on Helmholtz by waiting 35 seconds
-        # Use a more robust regex-based replacement
+        # 3. Handle 502 errors by waiting 35 seconds and setting a parallel retry flag
+        # We need to modify the send_message loop
+
+        # Inject parallel_retry = False before the loop
+        content = content.replace("i = 0", "parallel_retry = False\n        i = 0")
+
+        # Modify the model call inside the loop
+        old_call = "response = self._raw_model_call(model, chat_api_params)"
+        new_call = """if parallel_retry:
+                        logger.info("Attempting parallel call to alias-large and alias-huge.")
+                        response = self._raw_model_call_parallel(["alias-large", "alias-huge"], chat_api_params)
+                        if isinstance(response, Exception):
+                            raise response
+                    else:
+                        response = self._raw_model_call(model, chat_api_params)"""
+        content = content.replace(old_call, new_call)
+
+        # Update the 502 catch block
         pattern = r"if isinstance\(e, openai\.APIStatusError\) and e\.status_code == 502 and isinstance\(self, HelmholtzBlabladorClient\):.*?except Exception as fallback_e:.*?logger\.error\(f\"Fallback to OpenAI also failed: \{fallback_e\}\"\)"
 
         new_502_block = """if isinstance(e, openai.APIStatusError) and e.status_code == 502 and isinstance(self, HelmholtzBlabladorClient):
-                    logger.warning("Helmholtz API returned a 502 error. Waiting 35 seconds before retrying...")
+                    logger.warning("Helmholtz API returned a 502 error. Waiting 35 seconds and enabling parallel retry...")
+                    parallel_retry = True
                     time.sleep(35)"""
 
-        new_content = re.sub(pattern, new_502_block, content, flags=re.DOTALL)
-
-        if new_content == content:
-            print("Could not find the 502 block to patch using regex.")
-        else:
-            content = new_content
+        content = re.sub(pattern, new_502_block, content, flags=re.DOTALL)
 
         with open(path, "w") as f:
             f.write(content)
-        print("TinyTroupe patched to handle 502 errors with 35s wait and use alias-large.")
+        print("TinyTroupe patched to handle 502 errors with 35s wait and parallel retries.")
 
 clone_tinytroupe()
 
@@ -78,6 +127,35 @@ JULES_API_URL = "https://jules.googleapis.com/v1alpha"
 
 # GitHub Client
 gh = Github(GITHUB_TOKEN) if GITHUB_TOKEN else None
+
+# Helper for parallel LLM calls
+def call_llm_parallel(client, model_names, messages, **kwargs):
+    def make_call(model_name):
+        try:
+            print(f"Parallel call attempting: {model_name}")
+            return client.chat.completions.create(
+                model=model_name,
+                messages=messages,
+                **kwargs
+            )
+        except Exception as e:
+            print(f"Parallel call error from {model_name}: {e}")
+            return e
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(model_names)) as executor:
+        futures = {executor.submit(make_call, m): m for m in model_names}
+        # Wait for the first success that isn't a 502/Proxy Error
+        for future in concurrent.futures.as_completed(futures):
+            res = future.result()
+            if not isinstance(res, Exception):
+                print(f"Parallel call success from: {futures[future]}")
+                # Try to cancel others (not always possible but good practice)
+                return res
+            else:
+                # If it's an error, check if we should keep waiting or if all failed
+                pass
+
+    return Exception("All parallel calls failed")
 
 # BLABLADOR Client for task generation
 def get_blablador_client():
@@ -196,10 +274,17 @@ def generate_tasks(theme, customer_profile):
             for attempt in range(3):
                 try:
                     print(f"Attempting task generation with {model_name}, attempt {attempt+1}")
-                    response = client.chat.completions.create(
-                        model=model_name,
-                        messages=[{"role": "user", "content": prompt}]
-                    )
+                    if attempt > 0:
+                        # Parallel retry after first failure
+                        print("Proxy error occurred previously. Attempting parallel call to alias-large and alias-huge.")
+                        response = call_llm_parallel(client, ["alias-large", "alias-huge"], [{"role": "user", "content": prompt}])
+                        if isinstance(response, Exception):
+                            raise response
+                    else:
+                        response = client.chat.completions.create(
+                            model=model_name,
+                            messages=[{"role": "user", "content": prompt}]
+                        )
                     break
                 except Exception as e:
                     print(f"Error during task generation with {model_name}: {e}")
@@ -210,7 +295,7 @@ def generate_tasks(theme, customer_profile):
                         # For other errors, don't wait as long but still retry or move on
                         time.sleep(1)
 
-            if not response:
+            if not response or isinstance(response, Exception):
                 print(f"Failed to get response from {model_name} after all attempts.")
                 continue
 
