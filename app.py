@@ -345,6 +345,7 @@ def start_and_monitor_sessions(personas, tasks, url):
         prompt = template.replace("{{persona_context}}", json.dumps(persona))
         prompt = prompt.replace("{{tasks_list}}", json.dumps(tasks))
         prompt = prompt.replace("{{url}}", url)
+        prompt = prompt.replace("{{blablador_api_key}}", BLABLADOR_API_KEY if BLABLADOR_API_KEY else "YOUR_API_KEY")
 
         # Call Jules API
         headers = {
