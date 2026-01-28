@@ -5,6 +5,7 @@ import re
 import time
 import json
 import concurrent.futures
+import uuid
 
 # Logic to clone TinyTroupe on startup if not present
 def clone_tinytroupe():
@@ -97,6 +98,30 @@ def patch_tinytroupe():
         print("TinyTroupe patched to handle 502 errors with 35s wait and parallel retries.")
 
 clone_tinytroupe()
+
+def setup_mkslides():
+    if not os.path.exists("external/mkslides"):
+        print("Cloning mkslides...")
+        os.makedirs("external", exist_ok=True)
+        subprocess.run([
+            "git", "clone", "--recursive",
+            "https://github.com/MartenBE/mkslides.git", "external/mkslides"
+        ])
+        # Patch pyproject.toml to allow Python 3.12
+        pyproject_path = "external/mkslides/pyproject.toml"
+        if os.path.exists(pyproject_path):
+            with open(pyproject_path, "r") as f:
+                content = f.read()
+            content = content.replace('requires-python = ">=3.13"', 'requires-python = ">=3.12"')
+            with open(pyproject_path, "w") as f:
+                f.write(content)
+
+        # Install dependencies and mkslides
+        subprocess.run(["pip", "install", "./external/mkslides"])
+    else:
+        print("mkslides already present.")
+
+setup_mkslides()
 
 import gradio as gr
 from github import Github
@@ -191,8 +216,23 @@ def get_repo_branches(repo_full_name):
         return ["main"]
     try:
         repo = gh.get_repo(repo_full_name)
-        branches = [branch.name for branch in repo.get_branches()]
-        return branches
+        # Fetch branches, limit to 15 to avoid rate limits/lag
+        branches_paginated = repo.get_branches()
+        branches_list = []
+        for i, b in enumerate(branches_paginated):
+            if i >= 15: break
+            branches_list.append(b)
+
+        # Get commit date for each to sort
+        branch_info = []
+        for b in branches_list:
+            commit = repo.get_commit(b.commit.sha)
+            date = commit.commit.author.date
+            branch_info.append((b.name, date))
+
+        # Sort by date descending
+        branch_info.sort(key=lambda x: x[1], reverse=True)
+        return [b[0] for b in branch_info]
     except Exception as e:
         print(f"Error fetching branches: {e}")
         return ["main"]
@@ -249,7 +289,7 @@ def select_or_create_personas(theme, customer_profile, num_personas):
     # Ask LLM to judge
     pool_summaries = [{"index": i, "name": p["name"], "minibio": p.get("minibio", "")} for i, p in enumerate(pool)]
 
-    prompt = f"""
+    prompt = f\"\"\"
     You are an expert in user experience research and persona management.
     We need {num_personas} persona(s) for a UX analysis task with the following theme: {theme}
     And target customer profile: {customer_profile}
@@ -268,7 +308,7 @@ def select_or_create_personas(theme, customer_profile, num_personas):
             ... (up to {num_personas})
         ]
     }}
-    """
+    \"\"\"
 
     try:
         response = client.chat.completions.create(
@@ -367,7 +407,7 @@ def generate_tasks(theme, customer_profile):
     if not client:
         return [f"Task {i+1} for {theme} (BLABLADOR_API_KEY not set)" for i in range(10)]
 
-    prompt = f"""
+    prompt = f\"\"\"
     Generate 10 sequential tasks for a user to perform on a website related to the theme: {theme}.
     The user profile is: {customer_profile}.
 
@@ -382,7 +422,7 @@ def generate_tasks(theme, customer_profile):
     CRITICAL: You MUST return a JSON object with a "tasks" key containing a list of strings.
     Example: {{"tasks": ["task 1", "task 2", ...]}}
     Do not include any other text in your response.
-    """
+    \"\"\"
 
     models_to_try = ["alias-large", "alias-huge", "alias-fast"]
 
@@ -450,10 +490,14 @@ def start_and_monitor_sessions(personas, tasks, url):
 
     sessions = []
     for persona in personas:
+        # Generate unique report ID
+        report_id = str(uuid.uuid4())[:8]
+
         # Format prompt
         prompt = template.replace("{{persona_context}}", json.dumps(persona))
         prompt = prompt.replace("{{tasks_list}}", json.dumps(tasks))
         prompt = prompt.replace("{{url}}", url)
+        prompt = prompt.replace("{{report_id}}", report_id)
         prompt = prompt.replace("{{blablador_api_key}}", BLABLADOR_API_KEY if BLABLADOR_API_KEY else "YOUR_API_KEY")
 
         # Call Jules API
@@ -501,7 +545,7 @@ def start_and_monitor_sessions(personas, tasks, url):
                 if pr_url:
                     yield f"PR created for {current_session.get('title')}: {pr_url}. Pulling report...", all_reports
                     report_content = pull_report_from_pr(pr_url)
-                    all_reports += f"\n\n# Report for {current_session.get('title')}\n\n{report_content}"
+                    all_reports += f"\\n\\n# Report for {current_session.get('title')}\\n\\n{report_content}"
                     sessions.pop(i)
                     break # Restart loop since we modified the list
             else:
@@ -512,13 +556,39 @@ def start_and_monitor_sessions(personas, tasks, url):
 
     yield "All sessions complete!", all_reports
 
+def get_reports_in_branch(repo_full_name, branch_name):
+    if not gh or not repo_full_name or not branch_name:
+        return []
+    try:
+        repo = gh.get_repo(repo_full_name)
+        contents = repo.get_contents("user_experience_reports", ref=branch_name)
+        reports = []
+        for content_file in contents:
+            if content_file.name.startswith("report_") and content_file.name.endswith(".md"):
+                reports.append(content_file.name)
+        return sorted(reports, reverse=True)
+    except Exception as e:
+        print(f"Error fetching reports in branch {branch_name}: {e}")
+        return []
+
+def get_report_content(repo_full_name, branch_name, report_filename):
+    if not gh or not repo_full_name or not branch_name or not report_filename:
+        return "Error: Missing parameters."
+    try:
+        repo = gh.get_repo(repo_full_name)
+        file_content = repo.get_contents(f"user_experience_reports/{report_filename}", ref=branch_name)
+        return file_content.decoded_content.decode("utf-8")
+    except Exception as e:
+        print(f"Error fetching report {report_filename}: {e}")
+        return f"Error fetching report: {str(e)}"
+
 def pull_report_from_pr(pr_url):
     if not gh:
         return "Error: GITHUB_TOKEN not set."
 
     try:
         # Extract repo and PR number from URL
-        match = re.search(r"github\.com/([^/]+/[^/]+)/pull/(\d+)", pr_url)
+        match = re.search(r"github\\.com/([^/]+/[^/]+)/pull/(\\d+)", pr_url)
         if not match:
             return "Error: Could not parse PR URL."
 
@@ -529,20 +599,73 @@ def pull_report_from_pr(pr_url):
         pr = repo.get_pull(pr_number)
         branch_name = pr.head.ref
 
-        # Fetch the report.md file
-        file_path = "user_experience_reports/report.md"
-        try:
-            file_content = repo.get_contents(file_path, ref=branch_name)
-            content = file_content.decoded_content.decode("utf-8")
-            # Mark as processed
-            processed_prs.add(pr_number)
-            return content
-        except:
-            return "Report not found yet in this branch."
+        # Fetch the report files
+        reports = get_reports_in_branch(repo_full_name, branch_name)
+        if not reports:
+            # Try legacy name
+            try:
+                file_content = repo.get_contents("user_experience_reports/report.md", ref=branch_name)
+                content = file_content.decoded_content.decode("utf-8")
+                processed_prs.add(pr_number)
+                return content
+            except:
+                return "Report not found yet in this branch."
+
+        # Get the first report found
+        content = get_report_content(repo_full_name, branch_name, reports[0])
+        processed_prs.add(pr_number)
+        return content
 
     except Exception as e:
         print(f"Error pulling report: {e}")
         return f"Error pulling report: {str(e)}"
+
+def render_slides(repo_full_name, branch_name, report_filename):
+    if not gh or not repo_full_name or not branch_name or not report_filename:
+        return "Error: Missing parameters."
+
+    try:
+        # report_filename is report_ID.md, we want slides_ID.md
+        slides_filename = report_filename.replace("report_", "slides_")
+
+        repo = gh.get_repo(repo_full_name)
+        try:
+            file_content = repo.get_contents(f"user_experience_reports/{slides_filename}", ref=branch_name)
+            content = file_content.decoded_content.decode("utf-8")
+        except:
+            # Fallback: maybe it's slides.md
+            try:
+                file_content = repo.get_contents("user_experience_reports/slides.md", ref=branch_name)
+                content = file_content.decoded_content.decode("utf-8")
+            except:
+                return "slides markdown not found for this report."
+
+        # Prepare workspace
+        report_id = report_filename.replace("report_", "").replace(".md", "")
+        work_dir = f"slides_work_{report_id}"
+        os.makedirs(work_dir, exist_ok=True)
+        with open(f"{work_dir}/index.md", "w") as f:
+            f.write(content)
+
+        # Run mkslides
+        output_dir = f"slides_site_{report_id}"
+        # Ensure we have a clean output dir
+        if os.path.exists(output_dir):
+            import shutil
+            shutil.rmtree(output_dir)
+
+        subprocess.run(["mkslides", "build", work_dir, "--site-dir", output_dir])
+
+        if os.path.exists(f"{output_dir}/index.html"):
+            # Return IFrame pointing to the generated site.
+            # We use /file= prefix which Gradio uses to serve files in allowed_paths.
+            return f'<iframe src="/file={os.path.abspath(output_dir)}/index.html" width="100%" height="600px"></iframe>'
+        else:
+            return "Failed to render slides."
+
+    except Exception as e:
+        print(f"Error rendering slides: {e}")
+        return f"Error rendering slides: {str(e)}"
 
 def monitor_repo_for_reports():
     global all_discovered_reports
@@ -564,8 +687,8 @@ def monitor_repo_for_reports():
                     content = file_content.decoded_content.decode("utf-8")
 
                     processed_prs.add(pr.number)
-                    report_header = f"\n\n## Discovered Report: {pr.title} (PR #{pr.number})\n\n"
-                    all_discovered_reports = report_header + content + "\n\n---\n\n" + all_discovered_reports
+                    report_header = f"\\n\\n## Discovered Report: {pr.title} (PR #{pr.number})\\n\\n"
+                    all_discovered_reports = report_header + content + "\\n\\n---\\n\\n" + all_discovered_reports
                     new_content_found = True
                 except:
                     # Report not in this PR or not yet created
@@ -580,35 +703,85 @@ def monitor_repo_for_reports():
 with gr.Blocks() as demo:
     gr.Markdown("# Jules UX Analysis Orchestrator")
 
-    with gr.Row():
-        with gr.Column():
-            theme_input = gr.Textbox(label="Theme", placeholder="e.g., Communication, Purchase decisions, Information gathering")
-            profile_input = gr.Textbox(label="Customer Profile Description", placeholder="Describe the target customer...")
-            num_personas_input = gr.Number(label="Number of Personas", value=1, precision=0)
-            url_input = gr.Textbox(label="Target URL", value="https://example.com")
+    with gr.Tabs():
+        with gr.Tab("Orchestrator"):
+            gr.Markdown("### Start New Jules Sessions")
+            with gr.Row():
+                with gr.Column():
+                    theme_input = gr.Textbox(label="Theme", placeholder="e.g., Communication, Purchase decisions, Information gathering")
+                    profile_input = gr.Textbox(label="Customer Profile Description", placeholder="Describe the target customer...")
+                    num_personas_input = gr.Number(label="Number of Personas", value=1, precision=0)
+                    url_input = gr.Textbox(label="Target URL", value="https://example.com")
+                    generate_btn = gr.Button("Generate Personas & Tasks")
 
+                with gr.Column():
+                    status_output = gr.Textbox(label="Status", interactive=False)
+                    task_list_display = gr.JSON(label="Tasks")
+                    persona_display = gr.JSON(label="Personas")
 
-            generate_btn = gr.Button("Generate Personas & Tasks")
+            start_session_btn = gr.Button("Start Jules Session", variant="primary")
+            report_output = gr.Markdown(label="Active Session Reports")
 
-        with gr.Column():
-            status_output = gr.Textbox(label="Status", interactive=False)
-            task_list_display = gr.JSON(label="Tasks")
-            persona_display = gr.JSON(label="Personas")
+        with gr.Tab("Report Viewer"):
+            gr.Markdown("### View UX Reports")
+            with gr.Row():
+                rv_repo_select = gr.Dropdown(label="Repository", choices=get_user_repos(), value=REPO_NAME)
+                rv_branch_select = gr.Dropdown(label="Branch", choices=get_repo_branches(REPO_NAME))
+                rv_refresh_branches_btn = gr.Button("Refresh Branches")
 
-    with gr.Row():
-        start_session_btn = gr.Button("Start Jules Session", variant="primary")
+            with gr.Row():
+                rv_report_select = gr.Dropdown(label="Select Report", choices=[])
+                rv_load_report_btn = gr.Button("Load Report")
 
-    with gr.Row():
-        with gr.Tab("Active Session Reports"):
-            report_output = gr.Markdown(label="Final Reports")
-        with gr.Tab("Global Repo Feed"):
+            rv_report_viewer = gr.Markdown(label="Report Content")
+
+            def rv_update_branches(repo_name):
+                branches = get_repo_branches(repo_name)
+                latest = branches[0] if branches else "main"
+                return gr.update(choices=branches, value=latest)
+
+            def rv_update_reports(repo_name, branch_name):
+                reports = get_reports_in_branch(repo_name, branch_name)
+                return gr.update(choices=reports, value=reports[0] if reports else None)
+
+            rv_refresh_branches_btn.click(fn=rv_update_branches, inputs=[rv_repo_select], outputs=[rv_branch_select])
+            rv_branch_select.change(fn=rv_update_reports, inputs=[rv_repo_select, rv_branch_select], outputs=[rv_report_select])
+            rv_load_report_btn.click(fn=get_report_content, inputs=[rv_repo_select, rv_branch_select, rv_report_select], outputs=[rv_report_viewer])
+
+        with gr.Tab("Slideshow"):
+            gr.Markdown("### View Presentation Slides")
+            with gr.Row():
+                sl_repo_select = gr.Dropdown(label="Repository", choices=get_user_repos(), value=REPO_NAME)
+                sl_branch_select = gr.Dropdown(label="Branch", choices=get_repo_branches(REPO_NAME))
+                sl_refresh_branches_btn = gr.Button("Refresh Branches")
+
+            with gr.Row():
+                sl_report_select = gr.Dropdown(label="Select Report", choices=[])
+                sl_render_btn = gr.Button("Render Slideshow")
+
+            slideshow_display = gr.HTML(label="Slideshow")
+
+            def sl_update_branches(repo_name):
+                branches = get_repo_branches(repo_name)
+                latest = branches[0] if branches else "main"
+                return gr.update(choices=branches, value=latest)
+
+            def sl_update_reports(repo_name, branch_name):
+                reports = get_reports_in_branch(repo_name, branch_name)
+                return gr.update(choices=reports, value=reports[0] if reports else None)
+
+            sl_refresh_branches_btn.click(fn=sl_update_branches, inputs=[sl_repo_select], outputs=[sl_branch_select])
+            sl_branch_select.change(fn=sl_update_reports, inputs=[sl_repo_select, sl_branch_select], outputs=[sl_report_select])
+            sl_render_btn.click(fn=render_slides, inputs=[sl_repo_select, sl_branch_select, sl_report_select], outputs=[slideshow_display])
+
+        with gr.Tab("Legacy Feed"):
             gr.Markdown("### Live Monitoring of JsonLord/tiny_web for new UX reports")
-            refresh_btn = gr.Button("Refresh Feed Now")
+            refresh_feed_btn = gr.Button("Refresh Feed Now")
             global_feed = gr.Markdown(value="Waiting for new reports...")
             # Use a Timer to poll every 60 seconds
             timer = gr.Timer(value=60)
             timer.tick(fn=monitor_repo_for_reports, outputs=global_feed)
-            refresh_btn.click(fn=monitor_repo_for_reports, outputs=global_feed)
+            refresh_feed_btn.click(fn=monitor_repo_for_reports, outputs=global_feed)
 
     # Event handlers
     generate_btn.click(
@@ -624,4 +797,5 @@ with gr.Blocks() as demo:
     )
 
 if __name__ == "__main__":
-    demo.launch()
+    # Allow current directory for file serving, specifically for slides_site_*
+    demo.launch(allowed_paths=[os.getcwd()])
