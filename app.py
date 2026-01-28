@@ -6,6 +6,7 @@ import time
 import json
 import concurrent.futures
 import uuid
+from datetime import datetime
 
 # Logic to clone TinyTroupe on startup if not present
 def clone_tinytroupe():
@@ -199,42 +200,59 @@ def get_blablador_client():
     )
 
 def get_user_repos():
+    print("DEBUG: get_user_repos called")
     if not gh:
+        print("DEBUG: GitHub client not initialized.")
         return ["JsonLord/tiny_web"]
     try:
         user = gh.get_user()
         repos = [repo.full_name for repo in user.get_repos()]
+        print(f"DEBUG: Found repos: {repos}")
         if "JsonLord/tiny_web" not in repos:
             repos.append("JsonLord/tiny_web")
         return sorted(repos)
     except Exception as e:
-        print(f"Error fetching repos: {e}")
+        print(f"DEBUG: Error fetching repos: {e}")
         return ["JsonLord/tiny_web"]
 
 def get_repo_branches(repo_full_name):
-    if not gh or not repo_full_name:
+    print(f"DEBUG: get_repo_branches called for {repo_full_name}")
+    if not gh:
+        print("DEBUG: GitHub client (gh) is None. Check GITHUB_TOKEN.")
+        return ["main"]
+    if not repo_full_name:
         return ["main"]
     try:
         repo = gh.get_repo(repo_full_name)
-        # Fetch branches, limit to 15 to avoid rate limits/lag
+        # Fetch branches, limit to 100 to be more exhaustive
         branches_paginated = repo.get_branches()
         branches_list = []
         for i, b in enumerate(branches_paginated):
-            if i >= 15: break
+            if i >= 100: break
             branches_list.append(b)
+
+        print(f"DEBUG: Found {len(branches_list)} branches (limited to 100). Names: {[b.name for b in branches_list]}")
 
         # Get commit date for each to sort
         branch_info = []
         for b in branches_list:
-            commit = repo.get_commit(b.commit.sha)
-            date = commit.commit.author.date
-            branch_info.append((b.name, date))
+            try:
+                commit = repo.get_commit(b.commit.sha)
+                date = commit.commit.author.date
+                branch_info.append((b.name, date))
+            except Exception as commit_err:
+                print(f"DEBUG: Error fetching commit for branch {b.name}: {commit_err}")
+                branch_info.append((b.name, datetime.min))
 
         # Sort by date descending
         branch_info.sort(key=lambda x: x[1], reverse=True)
-        return [b[0] for b in branch_info]
+        result = [b[0] for b in branch_info]
+        print(f"DEBUG: Returning branches: {result}")
+        return result
     except Exception as e:
-        print(f"Error fetching branches: {e}")
+        print(f"DEBUG: Error fetching branches for {repo_full_name}: {e}")
+        import traceback
+        traceback.print_exc()
         return ["main"]
 
 def get_persona_pool():
@@ -797,5 +815,22 @@ with gr.Blocks() as demo:
     )
 
 if __name__ == "__main__":
+    # Startup connectivity check
+    print("--- STARTUP GITHUB CONNECTIVITY CHECK ---")
+    if gh is None:
+        print("ERROR: GITHUB_TOKEN environment variable is not set.")
+    else:
+        try:
+            user = gh.get_user().login
+            print(f"SUCCESS: Logged in to GitHub as: {user}")
+
+            # Test branch fetching for REPO_NAME
+            print(f"Testing branch fetch for {REPO_NAME}...")
+            test_branches = get_repo_branches(REPO_NAME)
+            print(f"Test branch fetch successful. Found {len(test_branches)} branches.")
+        except Exception as startup_err:
+            print(f"ERROR: GitHub connectivity test failed: {startup_err}")
+    print("-----------------------------------------")
+
     # Allow current directory for file serving, specifically for slides_site_*
     demo.launch(allowed_paths=[os.getcwd()])
