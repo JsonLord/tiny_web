@@ -145,7 +145,7 @@ except ImportError as e:
     print(f"Error importing TinyTroupe: {e}")
 
 # Configuration from environment variables
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN") or os.environ.get("GITHUB_API_TOKEN")
 JULES_API_KEY = os.environ.get("JULES_API_KEY")
 BLABLADOR_API_KEY = os.environ.get("BLABLADOR_API_KEY")
 BLABLADOR_BASE_URL = "https://api.helmholtz-blablador.fz-juelich.de/v1"
@@ -601,16 +601,21 @@ def get_reports_in_branch(repo_full_name, branch_name):
         contents = repo.get_contents("user_experience_reports", ref=branch_name)
         reports = []
         for content_file in contents:
-            if content_file.name.startswith("report_") and content_file.name.endswith(".md"):
-                reports.append(content_file.name)
+            name = content_file.name
+            if name == "report.md" or (name.startswith("report_") and name.endswith(".md")):
+                reports.append(name)
+
+        # Sort so that report_ID.md are grouped and report.md is visible
         return sorted(reports, reverse=True)
     except Exception as e:
         print(f"Error fetching reports in branch {branch_name}: {e}")
         return []
 
 def get_report_content(repo_full_name, branch_name, report_filename):
-    if not gh or not repo_full_name or not branch_name or not report_filename:
-        return "Error: Missing parameters."
+    if not gh:
+        return "Error: GitHub client not initialized. Check your token."
+    if not repo_full_name or not branch_name or not report_filename:
+        return "Please select a repository, branch, and report."
     try:
         repo = gh.get_repo(repo_full_name)
         file_content = repo.get_contents(f"user_experience_reports/{report_filename}", ref=branch_name)
@@ -658,12 +663,18 @@ def pull_report_from_pr(pr_url):
         return f"Error pulling report: {str(e)}"
 
 def render_slides(repo_full_name, branch_name, report_filename):
-    if not gh or not repo_full_name or not branch_name or not report_filename:
-        return "Error: Missing parameters."
+    if not gh:
+        return "Error: GitHub client not initialized. Check your token."
+    if not repo_full_name or not branch_name or not report_filename:
+        return "Please select a repository, branch, and report."
 
     try:
         # report_filename is report_ID.md, we want slides_ID.md
-        slides_filename = report_filename.replace("report_", "slides_")
+        # if report_filename is report.md, we want slides.md
+        if report_filename == "report.md":
+            slides_filename = "slides.md"
+        else:
+            slides_filename = report_filename.replace("report_", "slides_")
 
         repo = gh.get_repo(repo_full_name)
         try:
@@ -783,6 +794,7 @@ with gr.Blocks() as demo:
                 reports = get_reports_in_branch(repo_name, branch_name)
                 return gr.update(choices=reports, value=reports[0] if reports else None)
 
+            rv_repo_select.change(fn=rv_update_branches, inputs=[rv_repo_select], outputs=[rv_branch_select])
             rv_refresh_branches_btn.click(fn=rv_update_branches, inputs=[rv_repo_select], outputs=[rv_branch_select])
             rv_branch_select.change(fn=rv_update_reports, inputs=[rv_repo_select, rv_branch_select], outputs=[rv_report_select])
             rv_load_report_btn.click(fn=get_report_content, inputs=[rv_repo_select, rv_branch_select, rv_report_select], outputs=[rv_report_viewer])
@@ -809,6 +821,7 @@ with gr.Blocks() as demo:
                 reports = get_reports_in_branch(repo_name, branch_name)
                 return gr.update(choices=reports, value=reports[0] if reports else None)
 
+            sl_repo_select.change(fn=sl_update_branches, inputs=[sl_repo_select], outputs=[sl_branch_select])
             sl_refresh_branches_btn.click(fn=sl_update_branches, inputs=[sl_repo_select], outputs=[sl_branch_select])
             sl_branch_select.change(fn=sl_update_reports, inputs=[sl_repo_select, sl_branch_select], outputs=[sl_report_select])
             sl_render_btn.click(fn=render_slides, inputs=[sl_repo_select, sl_branch_select, sl_report_select], outputs=[slideshow_display])
