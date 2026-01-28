@@ -715,7 +715,7 @@ def monitor_repo_for_reports():
         repo = gh.get_repo(REPO_NAME)
 
         new_content_found = False
-        for branch_name in branches[:10]: # Check only top 10 recent branches for performance
+        for branch_name in branches[:25]: # Check top 25 recent branches
             reports = get_reports_in_branch(REPO_NAME, branch_name)
             for report_file in reports:
                 report_key = f"{branch_name}/{report_file}"
@@ -824,12 +824,27 @@ with gr.Blocks() as demo:
             sys_branch_output = gr.JSON(label="Discovered Branches")
 
             def system_test(token, repo_name):
+                global gh, GITHUB_TOKEN
                 try:
-                    test_gh = Github(token) if token else gh
-                    if not test_gh:
-                        return "Error: No GitHub client available.", None
+                    if token:
+                        add_log(f"Testing connection with provided token...")
+                        test_gh = Github(token)
+                    elif gh:
+                        add_log(f"Testing connection with existing client...")
+                        test_gh = gh
+                    else:
+                        add_log("ERROR: No token provided and default client is missing.")
+                        return "Error: No GitHub client available. Please provide a token.", None
 
                     user = test_gh.get_user().login
+                    add_log(f"Successfully authenticated as {user}")
+
+                    # Update global client if token was provided
+                    if token:
+                        gh = test_gh
+                        GITHUB_TOKEN = token
+                        add_log("Global GitHub client updated with new token.")
+
                     status = f"Success: Connected as {user} to {repo_name}"
 
                     # Use existing optimized logic
@@ -837,6 +852,7 @@ with gr.Blocks() as demo:
 
                     return status, branches
                 except Exception as e:
+                    add_log(f"System Test Error: {str(e)}")
                     return f"Error: {str(e)}", None
 
             sys_test_btn.click(fn=system_test, inputs=[sys_token_input, sys_repo_input], outputs=[sys_status, sys_branch_output])
