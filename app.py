@@ -6,6 +6,7 @@ import time
 import json
 import concurrent.futures
 import uuid
+import shutil
 from datetime import datetime
 
 # Logic to clone TinyTroupe on startup if not present
@@ -598,30 +599,58 @@ def get_reports_in_branch(repo_full_name, branch_name):
         return []
     try:
         repo = gh.get_repo(repo_full_name)
-        contents = repo.get_contents("user_experience_reports", ref=branch_name)
-        reports = []
-        for content_file in contents:
-            name = content_file.name
-            if name == "report.md" or (name.startswith("report_") and name.endswith(".md")):
-                reports.append(name)
+        add_log(f"Scanning branch {branch_name} for reports...")
 
-        # Sort so that report_ID.md are grouped and report.md is visible
-        return sorted(reports, reverse=True)
+        # Method 1: Check user_experience_reports directory
+        reports = []
+        try:
+            contents = repo.get_contents("user_experience_reports", ref=branch_name)
+            for content_file in contents:
+                name = content_file.name
+                if name.endswith(".md") and ("report" in name.lower() or name.startswith("slides")):
+                    reports.append(f"user_experience_reports/{name}")
+        except:
+            pass
+
+        # Method 2: Recursive scan for ALL Markdown files
+        add_log("Deep scanning repository for all Markdown files...")
+        tree = repo.get_git_tree(branch_name, recursive=True).tree
+        for element in tree:
+            if element.type == "blob" and element.path.endswith(".md"):
+                path = element.path
+                if path not in reports:
+                    reports.append(path)
+
+        # Sort by relevance: files in user_experience_reports first, then others
+        def sort_key(path):
+            p_lower = path.lower()
+            score = 0
+            if "user_experience_reports" in p_lower: score -= 10
+            if "report" in p_lower: score -= 5
+            if "slide" in p_lower: score -= 3
+            if "ux" in p_lower: score -= 2
+            return (score, p_lower)
+
+        reports.sort(key=sort_key)
+
+        add_log(f"Discovered {len(reports)} total Markdown files.")
+        return reports
     except Exception as e:
-        print(f"Error fetching reports in branch {branch_name}: {e}")
+        add_log(f"Error fetching reports in branch {branch_name}: {e}")
         return []
 
-def get_report_content(repo_full_name, branch_name, report_filename):
+def get_report_content(repo_full_name, branch_name, report_path):
     if not gh:
         return "Error: GitHub client not initialized. Check your token."
-    if not repo_full_name or not branch_name or not report_filename:
+    if not repo_full_name or not branch_name or not report_path:
         return "Please select a repository, branch, and report."
     try:
         repo = gh.get_repo(repo_full_name)
-        file_content = repo.get_contents(f"user_experience_reports/{report_filename}", ref=branch_name)
+        add_log(f"Fetching content for: {report_path}")
+        file_content = repo.get_contents(report_path, ref=branch_name)
         return file_content.decoded_content.decode("utf-8")
     except Exception as e:
-        print(f"Error fetching report {report_filename}: {e}")
+        add_log(f"Error fetching {report_path}: {e}")
         return f"Error fetching report: {str(e)}"
 
 def pull_report_from_pr(pr_url):
@@ -662,34 +691,42 @@ def pull_report_from_pr(pr_url):
         print(f"Error pulling report: {e}")
         return f"Error pulling report: {str(e)}"
 
-def render_slides(repo_full_name, branch_name, report_filename):
+def render_slides(repo_full_name, branch_name, report_path):
     if not gh:
         return "Error: GitHub client not initialized. Check your token."
-    if not repo_full_name or not branch_name or not report_filename:
+    if not repo_full_name or not branch_name or not report_path:
         return "Please select a repository, branch, and report."
 
     try:
-        # report_filename is report_ID.md, we want slides_ID.md
-        # if report_filename is report.md, we want slides.md
-        if report_filename == "report.md":
-            slides_filename = "slides.md"
-        else:
-            slides_filename = report_filename.replace("report_", "slides_")
-
         repo = gh.get_repo(repo_full_name)
+
+        # If user selected a slides file directly, use it
+        if "slide" in report_path.lower():
+            slides_path = report_path
+        else:
+            # Try to guess slides path from report path
+            # report_path is e.g. "user_experience_reports/report_123.md"
+            slides_path = report_path.replace("report_", "slides_").replace("report.md", "slides.md")
+            add_log(f"Attempting to map report to slides: {slides_path}")
+
         try:
-            file_content = repo.get_contents(f"user_experience_reports/{slides_filename}", ref=branch_name)
+            file_content = repo.get_contents(slides_path, ref=branch_name)
             content = file_content.decoded_content.decode("utf-8")
         except:
-            # Fallback: maybe it's slides.md
-            try:
-                file_content = repo.get_contents("user_experience_reports/slides.md", ref=branch_name)
+            # Last resort fallback: look for any .md file with 'slides' in the name in the same branch
+            add_log("Slides file not found at predicted path. Searching branch...")
+            reports = get_reports_in_branch(repo_full_name, branch_name)
+            slides_files = [r for r in reports if "slide" in r.lower()]
+            if slides_files:
+                slides_path = slides_files[0]
+                add_log(f"Found alternative slides file: {slides_path}")
+                file_content = repo.get_contents(slides_path, ref=branch_name)
                 content = file_content.decoded_content.decode("utf-8")
-            except:
-                return "slides markdown not found for this report."
+            else:
+                return f"Could not find a slides file corresponding to {report_path}. Please select the slides file manually in the dropdown if it exists."
 
         # Prepare workspace
-        report_id = report_filename.replace("report_", "").replace(".md", "")
+        report_id = str(uuid.uuid4())[:8]
         work_dir = f"slides_work_{report_id}"
         os.makedirs(work_dir, exist_ok=True)
         with open(f"{work_dir}/index.md", "w") as f:
@@ -699,7 +736,6 @@ def render_slides(repo_full_name, branch_name, report_filename):
         output_dir = f"slides_site_{report_id}"
         # Ensure we have a clean output dir
         if os.path.exists(output_dir):
-            import shutil
             shutil.rmtree(output_dir)
 
         subprocess.run(["mkslides", "build", work_dir, "--site-dir", output_dir])
@@ -780,8 +816,10 @@ with gr.Blocks() as demo:
                 rv_refresh_branches_btn = gr.Button("Refresh Branches")
 
             with gr.Row():
-                rv_report_select = gr.Dropdown(label="Select Report", choices=[])
+                rv_report_select = gr.Dropdown(label="Select Report", choices=[], allow_custom_value=True)
                 rv_load_report_btn = gr.Button("Load Report")
+
+            rv_manual_path = gr.Textbox(label="Or enter manual path (e.g. docs/my_report.md)", placeholder="docs/my_report.md")
 
             rv_report_viewer = gr.Markdown(label="Report Content")
 
@@ -795,9 +833,13 @@ with gr.Blocks() as demo:
                 return gr.update(choices=reports, value=reports[0] if reports else None)
 
             rv_repo_select.change(fn=rv_update_branches, inputs=[rv_repo_select], outputs=[rv_branch_select])
+            def rv_load_wrapper(repo, branch, selected, manual):
+                path = manual if manual else selected
+                return get_report_content(repo, branch, path)
+
             rv_refresh_branches_btn.click(fn=rv_update_branches, inputs=[rv_repo_select], outputs=[rv_branch_select])
             rv_branch_select.change(fn=rv_update_reports, inputs=[rv_repo_select, rv_branch_select], outputs=[rv_report_select])
-            rv_load_report_btn.click(fn=get_report_content, inputs=[rv_repo_select, rv_branch_select, rv_report_select], outputs=[rv_report_viewer])
+            rv_load_report_btn.click(fn=rv_load_wrapper, inputs=[rv_repo_select, rv_branch_select, rv_report_select, rv_manual_path], outputs=[rv_report_viewer])
 
         with gr.Tab("Slideshow"):
             gr.Markdown("### View Presentation Slides")
@@ -807,8 +849,10 @@ with gr.Blocks() as demo:
                 sl_refresh_branches_btn = gr.Button("Refresh Branches")
 
             with gr.Row():
-                sl_report_select = gr.Dropdown(label="Select Report", choices=[])
+                sl_report_select = gr.Dropdown(label="Select Report/Slides File", choices=[], allow_custom_value=True)
                 sl_render_btn = gr.Button("Render Slideshow")
+
+            sl_manual_path = gr.Textbox(label="Or enter manual path (e.g. docs/slides.md)", placeholder="docs/slides.md")
 
             slideshow_display = gr.HTML(label="Slideshow")
 
@@ -822,9 +866,13 @@ with gr.Blocks() as demo:
                 return gr.update(choices=reports, value=reports[0] if reports else None)
 
             sl_repo_select.change(fn=sl_update_branches, inputs=[sl_repo_select], outputs=[sl_branch_select])
+            def sl_render_wrapper(repo, branch, selected, manual):
+                path = manual if manual else selected
+                return render_slides(repo, branch, path)
+
             sl_refresh_branches_btn.click(fn=sl_update_branches, inputs=[sl_repo_select], outputs=[sl_branch_select])
             sl_branch_select.change(fn=sl_update_reports, inputs=[sl_repo_select, sl_branch_select], outputs=[sl_report_select])
-            sl_render_btn.click(fn=render_slides, inputs=[sl_repo_select, sl_branch_select, sl_report_select], outputs=[slideshow_display])
+            sl_render_btn.click(fn=sl_render_wrapper, inputs=[sl_repo_select, sl_branch_select, sl_report_select, sl_manual_path], outputs=[slideshow_display])
 
         with gr.Tab("System"):
             gr.Markdown("### System Diagnostics & Manual Connection")
@@ -902,8 +950,16 @@ with gr.Blocks() as demo:
 if __name__ == "__main__":
     # Startup connectivity check
     print("--- STARTUP GITHUB CONNECTIVITY CHECK ---")
+    token_source = "None"
+    if os.environ.get("GITHUB_TOKEN"):
+        token_source = "GITHUB_TOKEN"
+    elif os.environ.get("GITHUB_API_TOKEN"):
+        token_source = "GITHUB_API_TOKEN"
+
+    print(f"Token Source: {token_source}")
+
     if gh is None:
-        print("ERROR: GITHUB_TOKEN environment variable is not set.")
+        print(f"ERROR: No GitHub token found in GITHUB_TOKEN or GITHUB_API_TOKEN.")
     else:
         try:
             user = gh.get_user().login
