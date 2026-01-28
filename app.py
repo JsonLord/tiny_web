@@ -289,7 +289,7 @@ def select_or_create_personas(theme, customer_profile, num_personas):
     # Ask LLM to judge
     pool_summaries = [{"index": i, "name": p["name"], "minibio": p.get("minibio", "")} for i, p in enumerate(pool)]
 
-    prompt = f\"\"\"
+    prompt = f"""
     You are an expert in user experience research and persona management.
     We need {num_personas} persona(s) for a UX analysis task with the following theme: {theme}
     And target customer profile: {customer_profile}
@@ -308,7 +308,7 @@ def select_or_create_personas(theme, customer_profile, num_personas):
             ... (up to {num_personas})
         ]
     }}
-    \"\"\"
+    """
 
     try:
         response = client.chat.completions.create(
@@ -407,7 +407,7 @@ def generate_tasks(theme, customer_profile):
     if not client:
         return [f"Task {i+1} for {theme} (BLABLADOR_API_KEY not set)" for i in range(10)]
 
-    prompt = f\"\"\"
+    prompt = f"""
     Generate 10 sequential tasks for a user to perform on a website related to the theme: {theme}.
     The user profile is: {customer_profile}.
 
@@ -422,7 +422,7 @@ def generate_tasks(theme, customer_profile):
     CRITICAL: You MUST return a JSON object with a "tasks" key containing a list of strings.
     Example: {{"tasks": ["task 1", "task 2", ...]}}
     Do not include any other text in your response.
-    \"\"\"
+    """
 
     models_to_try = ["alias-large", "alias-huge", "alias-fast"]
 
@@ -545,7 +545,7 @@ def start_and_monitor_sessions(personas, tasks, url):
                 if pr_url:
                     yield f"PR created for {current_session.get('title')}: {pr_url}. Pulling report...", all_reports
                     report_content = pull_report_from_pr(pr_url)
-                    all_reports += f"\\n\\n# Report for {current_session.get('title')}\\n\\n{report_content}"
+                    all_reports += f"\n\n# Report for {current_session.get('title')}\n\n{report_content}"
                     sessions.pop(i)
                     break # Restart loop since we modified the list
             else:
@@ -588,7 +588,7 @@ def pull_report_from_pr(pr_url):
 
     try:
         # Extract repo and PR number from URL
-        match = re.search(r"github\\.com/([^/]+/[^/]+)/pull/(\\d+)", pr_url)
+        match = re.search(r"github\.com/([^/]+/[^/]+)/pull/(\d+)", pr_url)
         if not match:
             return "Error: Could not parse PR URL."
 
@@ -687,8 +687,8 @@ def monitor_repo_for_reports():
                     content = file_content.decoded_content.decode("utf-8")
 
                     processed_prs.add(pr.number)
-                    report_header = f"\\n\\n## Discovered Report: {pr.title} (PR #{pr.number})\\n\\n"
-                    all_discovered_reports = report_header + content + "\\n\\n---\\n\\n" + all_discovered_reports
+                    report_header = f"\n\n## Discovered Report: {pr.title} (PR #{pr.number})\n\n"
+                    all_discovered_reports = report_header + content + "\n\n---\n\n" + all_discovered_reports
                     new_content_found = True
                 except:
                     # Report not in this PR or not yet created
