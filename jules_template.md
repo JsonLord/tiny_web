@@ -16,6 +16,7 @@ You will simulate a persona performing tasks, but the final output must read lik
 - Persona: {{persona_context}}
 - Tasks: {{tasks_list}}
 - Target URL: {{url}}
+- Report ID: {{report_id}}
 
 ---
 
@@ -54,7 +55,7 @@ config_manager.update("reasoning_model", "alias-large")
 * Use ONLY browser_actions.
 * Navigate first to Target URL.
 * Execute ALL tasks sequentially.
-* After EACH task, append styled logs to report.md.
+* After EACH task, append styled logs to `/user_experience_reports/report_{{report_id}}.md`.
 
 ---
 
@@ -106,7 +107,7 @@ Flat menu → No scanning → Choice paralysis → Lost conversion
 
 ## 4. REPORT GENERATION (MAJOR UPGRADE)
 
-Create `/user_experience_reports/report.md`
+Create `/user_experience_reports/report_{{report_id}}.md`
 
 This must be a BUSINESS PRESENTATION DOCUMENT.
 
@@ -348,7 +349,7 @@ What happens if nothing changes?
 
 In addition to report.md, generate:
 
-`slides.md`
+`user_experience_reports/slides_{{report_id}}.md`
 
 This file contains presentation cards compatible with mkslides.
 
@@ -367,7 +368,7 @@ pip install -r requirements.txt
 Then render:
 
 ```bash
-python mkslides.py ../user_experience_reports/slides.md
+mkslides build ../user_experience_reports/
 ```
 
 ---
@@ -442,7 +443,7 @@ Cards must be reusable in mkslides.
 
 Once complete:
 
-Confirm report.md + slides.md are written.
+Confirm report_{{report_id}}.md + slides_{{report_id}}.md are written.
 
 Session will open PR automatically.
 

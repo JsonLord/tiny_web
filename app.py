@@ -160,6 +160,14 @@ POOL_PATH = "PersonaPool"
 # Global state for processed reports
 processed_prs = set()
 all_discovered_reports = ""
+github_logs = []
+
+def add_log(message):
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    log_entry = f"[{timestamp}] {message}"
+    github_logs.append(log_entry)
+    print(log_entry)
+    return "\n".join(github_logs[-20:])
 
 # Helper for parallel LLM calls
 def call_llm_parallel(client, model_names, messages, **kwargs):
@@ -199,58 +207,69 @@ def get_blablador_client():
         base_url=BLABLADOR_BASE_URL
     )
 
-def get_user_repos():
-    print("DEBUG: get_user_repos called")
-    if not gh:
-        print("DEBUG: GitHub client not initialized.")
+def get_user_repos(github_client=None):
+    client = github_client or gh
+    add_log("Fetching user repositories...")
+    if not client:
+        add_log("ERROR: GitHub client not initialized.")
         return ["JsonLord/tiny_web"]
     try:
-        user = gh.get_user()
+        user = client.get_user()
         repos = [repo.full_name for repo in user.get_repos()]
-        print(f"DEBUG: Found repos: {repos}")
+        add_log(f"Found {len(repos)} repositories.")
         if "JsonLord/tiny_web" not in repos:
             repos.append("JsonLord/tiny_web")
         return sorted(repos)
     except Exception as e:
-        print(f"DEBUG: Error fetching repos: {e}")
+        add_log(f"ERROR fetching repos: {e}")
         return ["JsonLord/tiny_web"]
 
-def get_repo_branches(repo_full_name):
-    print(f"DEBUG: get_repo_branches called for {repo_full_name}")
-    if not gh:
-        print("DEBUG: GitHub client (gh) is None. Check GITHUB_TOKEN.")
+def get_repo_branches(repo_full_name, github_client=None):
+    client = github_client or gh
+    add_log(f"Fetching branches for {repo_full_name}...")
+    if not client:
+        add_log("ERROR: GitHub client is None.")
         return ["main"]
     if not repo_full_name:
         return ["main"]
     try:
-        repo = gh.get_repo(repo_full_name)
-        # Fetch branches, limit to 100 to be more exhaustive
-        branches_paginated = repo.get_branches()
-        branches_list = []
-        for i, b in enumerate(branches_paginated):
-            if i >= 100: break
-            branches_list.append(b)
+        repo = client.get_repo(repo_full_name)
+        # Fetch branches
+        branches = list(repo.get_branches())
+        add_log(f"Discovered {len(branches)} branches.")
 
-        print(f"DEBUG: Found {len(branches_list)} branches (limited to 100). Names: {[b.name for b in branches_list]}")
-
-        # Get commit date for each to sort
+        # Use ThreadPool to fetch commit dates in parallel to be MUCH faster
         branch_info = []
-        for b in branches_list:
+
+        def fetch_branch_date(b):
             try:
                 commit = repo.get_commit(b.commit.sha)
-                date = commit.commit.author.date
-                branch_info.append((b.name, date))
-            except Exception as commit_err:
-                print(f"DEBUG: Error fetching commit for branch {b.name}: {commit_err}")
-                branch_info.append((b.name, datetime.min))
+                # Try multiple ways to get the date
+                date = None
+                if commit.commit and commit.commit.author:
+                    date = commit.commit.author.date
+                elif commit.commit and commit.commit.committer:
+                    date = commit.commit.committer.date
+
+                if not date:
+                    date = datetime.min
+                return (b.name, date)
+            except Exception as e:
+                return (b.name, datetime.min)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+            branch_info = list(executor.map(fetch_branch_date, branches))
 
         # Sort by date descending
         branch_info.sort(key=lambda x: x[1], reverse=True)
         result = [b[0] for b in branch_info]
-        print(f"DEBUG: Returning branches: {result}")
+
+        if result:
+            add_log(f"Successfully sorted {len(result)} branches. Latest: {result[0]}")
+
         return result
     except Exception as e:
-        print(f"DEBUG: Error fetching branches for {repo_full_name}: {e}")
+        add_log(f"ERROR fetching branches: {e}")
         import traceback
         traceback.print_exc()
         return ["main"]
@@ -690,31 +709,33 @@ def monitor_repo_for_reports():
     if not gh:
         return all_discovered_reports
 
+    add_log("Monitoring repository for new reports across branches...")
     try:
+        branches = get_repo_branches(REPO_NAME)
         repo = gh.get_repo(REPO_NAME)
-        # List open PRs
-        prs = repo.get_pulls(state='open', sort='created', direction='desc')
 
         new_content_found = False
-        for pr in prs:
-            if pr.number not in processed_prs:
-                # Check if it has the report
-                try:
-                    file_path = "user_experience_reports/report.md"
-                    file_content = repo.get_contents(file_path, ref=pr.head.ref)
-                    content = file_content.decoded_content.decode("utf-8")
+        for branch_name in branches[:10]: # Check only top 10 recent branches for performance
+            reports = get_reports_in_branch(REPO_NAME, branch_name)
+            for report_file in reports:
+                report_key = f"{branch_name}/{report_file}"
+                if report_key not in processed_prs:
+                    try:
+                        content = get_report_content(REPO_NAME, branch_name, report_file)
+                        report_header = f"\n\n## Discovered Report: {report_file} (Branch: {branch_name})\n\n"
+                        all_discovered_reports = report_header + content + "\n\n---\n\n" + all_discovered_reports
+                        processed_prs.add(report_key)
+                        new_content_found = True
+                        add_log(f"New report found: {report_file} in {branch_name}")
+                    except:
+                        continue
 
-                    processed_prs.add(pr.number)
-                    report_header = f"\n\n## Discovered Report: {pr.title} (PR #{pr.number})\n\n"
-                    all_discovered_reports = report_header + content + "\n\n---\n\n" + all_discovered_reports
-                    new_content_found = True
-                except:
-                    # Report not in this PR or not yet created
-                    continue
+        if not new_content_found:
+            add_log("No new reports found in recent branches.")
 
         return all_discovered_reports
     except Exception as e:
-        print(f"Error monitoring repo: {e}")
+        add_log(f"Error monitoring repo: {e}")
         return all_discovered_reports
 
 # Gradio UI
@@ -792,14 +813,49 @@ with gr.Blocks() as demo:
             sl_branch_select.change(fn=sl_update_reports, inputs=[sl_repo_select, sl_branch_select], outputs=[sl_report_select])
             sl_render_btn.click(fn=render_slides, inputs=[sl_repo_select, sl_branch_select, sl_report_select], outputs=[slideshow_display])
 
-        with gr.Tab("Legacy Feed"):
+        with gr.Tab("System"):
+            gr.Markdown("### System Diagnostics & Manual Connection")
+            with gr.Row():
+                sys_token_input = gr.Textbox(label="GitHub Token (Leave blank for default)", type="password")
+                sys_repo_input = gr.Textbox(label="Repository (e.g., JsonLord/tiny_web)", value=REPO_NAME)
+                sys_test_btn = gr.Button("Test Connection & Fetch Branches")
+
+            sys_status = gr.Textbox(label="Connection Status", interactive=False)
+            sys_branch_output = gr.JSON(label="Discovered Branches")
+
+            def system_test(token, repo_name):
+                try:
+                    test_gh = Github(token) if token else gh
+                    if not test_gh:
+                        return "Error: No GitHub client available.", None
+
+                    user = test_gh.get_user().login
+                    status = f"Success: Connected as {user} to {repo_name}"
+
+                    # Use existing optimized logic
+                    branches = get_repo_branches(repo_name, github_client=test_gh)
+
+                    return status, branches
+                except Exception as e:
+                    return f"Error: {str(e)}", None
+
+            sys_test_btn.click(fn=system_test, inputs=[sys_token_input, sys_repo_input], outputs=[sys_status, sys_branch_output])
+
+        with gr.Tab("Live Monitoring"):
             gr.Markdown("### Live Monitoring of JsonLord/tiny_web for new UX reports")
+            live_log = gr.Textbox(label="GitHub Connection Logs", lines=5, interactive=False)
             refresh_feed_btn = gr.Button("Refresh Feed Now")
             global_feed = gr.Markdown(value="Waiting for new reports...")
+
+            def monitor_and_log():
+                reports = monitor_repo_for_reports()
+                logs = "\n".join(github_logs[-20:])
+                return reports, logs
+
             # Use a Timer to poll every 60 seconds
             timer = gr.Timer(value=60)
-            timer.tick(fn=monitor_repo_for_reports, outputs=global_feed)
-            refresh_feed_btn.click(fn=monitor_repo_for_reports, outputs=global_feed)
+            timer.tick(fn=monitor_and_log, outputs=[global_feed, live_log])
+            refresh_feed_btn.click(fn=monitor_and_log, outputs=[global_feed, live_log])
 
     # Event handlers
     generate_btn.click(
