@@ -7,6 +7,7 @@ import json
 import concurrent.futures
 import uuid
 import shutil
+from gradio_client import Client
 from datetime import datetime
 
 # Logic to clone TinyTroupe on startup if not present
@@ -383,7 +384,89 @@ def select_or_create_personas(theme, customer_profile, num_personas):
 
     return final_personas
 
+def generate_persona_from_endpoint(theme, customer_profile):
+    add_log("Attempting persona generation from THzva/deeppersona-experience...")
+    client = get_blablador_client()
+    if not client:
+        return None
+
+    # Step 1: Breakdown profile into parameters using LLM
+    prompt = f"""
+    Break down the following theme and customer profile into the specific attributes required for a detailed persona.
+    Theme: {theme}
+    Profile: {customer_profile}
+
+    Return a JSON object with the following fields:
+    - name (string, full name)
+    - age (int)
+    - gender (string)
+    - occupation (string)
+    - city (string)
+    - country (string)
+    - custom_values (string, comma separated)
+    - custom_life_attitude (string)
+    - life_story (string, a brief background)
+    - interests_hobbies (string, comma separated)
+
+    CRITICAL: Return ONLY the JSON object.
+    """
+
+    try:
+        response = client.chat.completions.create(
+            model="alias-large",
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"}
+        )
+        params = json.loads(response.choices[0].message.content)
+        add_log(f"Profile breakdown complete for {params.get('occupation')}")
+
+        # Step 2: Call the new generation endpoint
+        gr_client = Client("THzva/deeppersona-experience")
+        result = gr_client.predict(
+                age=float(params.get("age", 30)),
+                gender=params.get("gender", "Unknown"),
+                occupation=params.get("occupation", theme),
+                city=params.get("city", "Unknown"),
+                country=params.get("country", "Unknown"),
+                custom_values=params.get("custom_values", "Efficiency"),
+                custom_life_attitude=params.get("custom_life_attitude", "Neutral"),
+                life_story=params.get("life_story", "A brief life story."),
+                interests_hobbies=params.get("interests_hobbies", "None"),
+                attribute_count=200,
+                api_name="/generate_persona"
+        )
+
+        # Step 3: Use the name from params or result
+        name = params.get("name")
+        if not name:
+            name_match = re.search(r"I am ([^,\.]+)", result)
+            name = name_match.group(1) if name_match else f"User_{uuid.uuid4().hex[:4]}"
+
+        return {
+            "name": name,
+            "minibio": result,
+            "persona": params
+        }
+    except Exception as e:
+        add_log(f"Endpoint generation failed: {e}")
+        return None
+
 def generate_personas(theme, customer_profile, num_personas):
+    add_log(f"Generating {num_personas} personas...")
+
+    # Try the new endpoint first
+    final_personas = []
+    for i in range(int(num_personas)):
+        p = generate_persona_from_endpoint(theme, customer_profile)
+        if p:
+            final_personas.append(p)
+
+    if len(final_personas) == int(num_personas):
+        add_log("Successfully generated all personas from endpoint.")
+        return final_personas
+
+    add_log("Falling back to TinyTroupe logic for remaining personas...")
+
     # Ensure alias-large is used
     config_manager.update("model", "alias-large")
     config_manager.update("reasoning_model", "alias-large")
@@ -414,7 +497,7 @@ def generate_personas(theme, customer_profile, num_personas):
             # Actually, the error shows it's a list of dictionaries that might be errors
             pass
 
-        people = factory.generate_people(number_of_people=int(num_personas), verbose=True)
+        people = factory.generate_people(number_of_people=int(num_personas) - len(final_personas), verbose=True)
         if not people:
             print("TinyTroupe generated 0 people. Using fallback.")
             raise Exception("No people generated.")
@@ -422,15 +505,16 @@ def generate_personas(theme, customer_profile, num_personas):
         print(f"Error in generate_personas: {e}")
         # Fallback: create dummy people if everything fails
         personas_data = []
-        for i in range(int(num_personas)):
+        for i in range(int(num_personas) - len(final_personas)):
+            idx = len(final_personas) + i
             personas_data.append({
-                "name": f"User_{i}",
+                "name": f"User_{idx}",
                 "minibio": f"A simulated user interested in {theme}.",
-                "persona": {"name": f"User_{i}", "occupation": theme, "background": customer_profile}
+                "persona": {"name": f"User_{idx}", "occupation": theme, "background": customer_profile}
             })
         return personas_data
 
-    personas_data = []
+    personas_data = final_personas
     if people:
         for person in people:
             personas_data.append({
