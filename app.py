@@ -678,12 +678,12 @@ def start_and_monitor_sessions(personas, tasks, url):
 
     yield "All sessions complete!", all_reports
 
-def get_reports_in_branch(repo_full_name, branch_name):
+def get_reports_in_branch(repo_full_name, branch_name, filter_type=None):
     if not gh or not repo_full_name or not branch_name:
         return []
     try:
         repo = gh.get_repo(repo_full_name)
-        add_log(f"Scanning branch {branch_name} for reports...")
+        add_log(f"Scanning branch {branch_name} for reports (filter: {filter_type})...")
 
         exclude_files = {"jules_template.md", "readme.md", "contributing.md", "license.md"}
 
@@ -694,6 +694,13 @@ def get_reports_in_branch(repo_full_name, branch_name):
             for content_file in contents:
                 name = content_file.name
                 if name.endswith(".md"):
+                    filename = name.lower()
+                    if filename in exclude_files: continue
+
+                    # Optional filtering
+                    if filter_type == "report" and "slide" in filename: continue
+                    if filter_type == "slides" and "report" in filename: continue
+
                     path = f"user_experience_reports/{name}"
                     reports.append(path)
         except:
@@ -708,6 +715,11 @@ def get_reports_in_branch(repo_full_name, branch_name):
                 filename = os.path.basename(path).lower()
                 if filename in exclude_files:
                     continue
+
+                # Optional filtering
+                if filter_type == "report" and "slide" in filename: continue
+                if filter_type == "slides" and "report" in filename: continue
+
                 if path not in reports:
                     reports.append(path)
 
@@ -716,8 +728,8 @@ def get_reports_in_branch(repo_full_name, branch_name):
             p_lower = path.lower()
             score = 0
             # Highest priority: specific report.md and slides.md in user_experience_reports
-            if p_lower == "user_experience_reports/report.md": score -= 1000
-            if p_lower == "user_experience_reports/slides.md": score -= 900
+            if filter_type == "report" and p_lower == "user_experience_reports/report.md": score -= 1000
+            if filter_type == "slides" and p_lower == "user_experience_reports/slides.md": score -= 1000
 
             # High priority: other files in user_experience_reports
             if "user_experience_reports" in p_lower: score -= 100
@@ -901,11 +913,9 @@ def monitor_repo_for_reports():
 
         new_content_found = False
         for branch_name in branches[:25]: # Check top 25 recent branches
-            reports = get_reports_in_branch(REPO_NAME, branch_name)
-            # Filter: automated monitor only cares about main report files, not individual slides
-            monitor_reports = [r for r in reports if "report" in r.lower() and "/slides/" not in r.lower()]
+            reports = get_reports_in_branch(REPO_NAME, branch_name, filter_type="report")
 
-            for report_file in monitor_reports:
+            for report_file in reports:
                 report_key = f"{branch_name}/{report_file}"
                 if report_key not in processed_prs:
                     try:
@@ -970,7 +980,7 @@ with gr.Blocks() as demo:
                 return gr.update(choices=branches, value=latest)
 
             def rv_update_reports(repo_name, branch_name):
-                reports = get_reports_in_branch(repo_name, branch_name)
+                reports = get_reports_in_branch(repo_name, branch_name, filter_type="report")
                 return gr.update(choices=reports, value=reports[0] if reports else None)
 
             rv_repo_select.change(fn=rv_update_branches, inputs=[rv_repo_select], outputs=[rv_branch_select])
@@ -1003,7 +1013,7 @@ with gr.Blocks() as demo:
                 return gr.update(choices=branches, value=latest)
 
             def sl_update_reports(repo_name, branch_name):
-                reports = get_reports_in_branch(repo_name, branch_name)
+                reports = get_reports_in_branch(repo_name, branch_name, filter_type="slides")
                 return gr.update(choices=reports, value=reports[0] if reports else None)
 
             sl_repo_select.change(fn=sl_update_branches, inputs=[sl_repo_select], outputs=[sl_branch_select])

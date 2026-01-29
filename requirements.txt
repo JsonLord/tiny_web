@@ -21,8 +21,8 @@ matplotlib
 pydantic
 textdistance
 scipy
-transformers==4.38.2
-huggingface-hub==0.22.2
+transformers
+huggingface-hub
 lxml_html_clean
 beautifulsoup4
 playwright
