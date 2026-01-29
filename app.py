@@ -127,7 +127,7 @@ def setup_mkslides():
 setup_mkslides()
 
 import gradio as gr
-from github import Github
+from github import Github, Auth
 import requests
 from openai import OpenAI
 import logging
@@ -154,7 +154,7 @@ BLABLADOR_BASE_URL = "https://api.helmholtz-blablador.fz-juelich.de/v1"
 JULES_API_URL = "https://jules.googleapis.com/v1alpha"
 
 # GitHub Client
-gh = Github(GITHUB_TOKEN) if GITHUB_TOKEN else None
+gh = Github(auth=Auth.Token(GITHUB_TOKEN)) if GITHUB_TOKEN else None
 REPO_NAME = "JsonLord/tiny_web"
 POOL_REPO_NAME = "JsonLord/agent-notes"
 POOL_PATH = "PersonaPool"
@@ -685,14 +685,17 @@ def get_reports_in_branch(repo_full_name, branch_name):
         repo = gh.get_repo(repo_full_name)
         add_log(f"Scanning branch {branch_name} for reports...")
 
+        exclude_files = {"jules_template.md", "readme.md", "contributing.md", "license.md"}
+
         # Method 1: Check user_experience_reports directory
         reports = []
         try:
             contents = repo.get_contents("user_experience_reports", ref=branch_name)
             for content_file in contents:
                 name = content_file.name
-                if name.endswith(".md") and ("report" in name.lower() or name.startswith("slides")):
-                    reports.append(f"user_experience_reports/{name}")
+                if name.endswith(".md"):
+                    path = f"user_experience_reports/{name}"
+                    reports.append(path)
         except:
             pass
 
@@ -702,22 +705,34 @@ def get_reports_in_branch(repo_full_name, branch_name):
         for element in tree:
             if element.type == "blob" and element.path.endswith(".md"):
                 path = element.path
+                filename = os.path.basename(path).lower()
+                if filename in exclude_files:
+                    continue
                 if path not in reports:
                     reports.append(path)
 
-        # Sort by relevance: files in user_experience_reports first, then others
+        # Sort by relevance
         def sort_key(path):
             p_lower = path.lower()
             score = 0
-            if "user_experience_reports" in p_lower: score -= 10
-            if "report" in p_lower: score -= 5
-            if "slide" in p_lower: score -= 3
-            if "ux" in p_lower: score -= 2
+            # Highest priority: specific report.md and slides.md in user_experience_reports
+            if p_lower == "user_experience_reports/report.md": score -= 1000
+            if p_lower == "user_experience_reports/slides.md": score -= 900
+
+            # High priority: other files in user_experience_reports
+            if "user_experience_reports" in p_lower: score -= 100
+
+            # Medium priority: keywords in filename
+            filename = os.path.basename(p_lower)
+            if "report" in filename: score -= 50
+            if "slide" in filename: score -= 30
+            if "ux" in filename: score -= 20
+
             return (score, p_lower)
 
         reports.sort(key=sort_key)
 
-        add_log(f"Discovered {len(reports)} total Markdown files.")
+        add_log(f"Discovered {len(reports)} potential Markdown files.")
         return reports
     except Exception as e:
         add_log(f"Error fetching reports in branch {branch_name}: {e}")
@@ -730,10 +745,14 @@ def get_report_content(repo_full_name, branch_name, report_path):
         return "Please select a repository, branch, and report."
     try:
         repo = gh.get_repo(repo_full_name)
-        add_log(f"Fetching content for: {report_path}")
+        add_log(f"Fetching content from branch '{branch_name}' at path: {report_path}")
         file_content = repo.get_contents(report_path, ref=branch_name)
         return file_content.decoded_content.decode("utf-8")
     except Exception as e:
+        msg = str(e)
+        if "404" in msg:
+            add_log(f"ERROR: File not found: {report_path} in branch {branch_name}")
+            return f"Error: File '{report_path}' not found in branch '{branch_name}'. Please verify the path and branch."
         add_log(f"Error fetching {report_path}: {e}")
         return f"Error fetching report: {str(e)}"
 
@@ -784,30 +803,38 @@ def render_slides(repo_full_name, branch_name, report_path):
     try:
         repo = gh.get_repo(repo_full_name)
 
-        # If user selected a slides file directly, use it
+        # Determine slides path
         if "slide" in report_path.lower():
             slides_path = report_path
+        elif report_path == "user_experience_reports/report.md":
+            slides_path = "user_experience_reports/slides.md"
         else:
-            # Try to guess slides path from report path
-            # report_path is e.g. "user_experience_reports/report_123.md"
-            slides_path = report_path.replace("report_", "slides_").replace("report.md", "slides.md")
-            add_log(f"Attempting to map report to slides: {slides_path}")
+            # Try to map report_ID.md to slides_ID.md
+            slides_path = report_path.replace("report_", "slides_")
+            if slides_path == report_path: # No replacement happened
+                 slides_path = "user_experience_reports/slides.md" # fallback
+
+        add_log(f"Attempting to fetch slides from branch '{branch_name}' at path: {slides_path}")
 
         try:
             file_content = repo.get_contents(slides_path, ref=branch_name)
             content = file_content.decoded_content.decode("utf-8")
-        except:
-            # Last resort fallback: look for any .md file with 'slides' in the name in the same branch
-            add_log("Slides file not found at predicted path. Searching branch...")
-            reports = get_reports_in_branch(repo_full_name, branch_name)
-            slides_files = [r for r in reports if "slide" in r.lower()]
-            if slides_files:
-                slides_path = slides_files[0]
-                add_log(f"Found alternative slides file: {slides_path}")
-                file_content = repo.get_contents(slides_path, ref=branch_name)
-                content = file_content.decoded_content.decode("utf-8")
+        except Exception as e:
+            if "404" in str(e):
+                add_log(f"Slides file not found at {slides_path}. Attempting fallback...")
+                # Last resort fallback: look for any .md file with 'slides' in the name in the same branch
+                reports = get_reports_in_branch(repo_full_name, branch_name)
+                slides_files = [r for r in reports if "slide" in r.lower()]
+                if slides_files:
+                    slides_path = slides_files[0]
+                    add_log(f"Found alternative slides file: {slides_path}")
+                    file_content = repo.get_contents(slides_path, ref=branch_name)
+                    content = file_content.decoded_content.decode("utf-8")
+                else:
+                    return f"Error: File '{slides_path}' not found in branch '{branch_name}'. No other slide files discovered."
             else:
-                return f"Could not find a slides file corresponding to {report_path}. Please select the slides file manually in the dropdown if it exists."
+                add_log(f"Error fetching slides: {e}")
+                return f"Error fetching slides: {str(e)}"
 
         # Prepare workspace
         report_id = str(uuid.uuid4())[:8]
@@ -973,7 +1000,7 @@ with gr.Blocks() as demo:
                 try:
                     if token:
                         add_log(f"Testing connection with provided token...")
-                        test_gh = Github(token)
+                        test_gh = Github(auth=Auth.Token(token))
                     elif gh:
                         add_log(f"Testing connection with existing client...")
                         test_gh = gh
