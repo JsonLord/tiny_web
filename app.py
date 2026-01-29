@@ -50,7 +50,7 @@ TINYTROUPE_PATH = os.path.join(os.getcwd(), "external", "TinyTroupe")
 sys.path.append(TINYTROUPE_PATH)
 
 # Configuration from environment variables
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN") or os.environ.get("GITHUB_API_TOKEN")
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN") or os.environ.get("GITHUB_API_TOKEN") or os.environ.get("GITHUB_API_KEY")
 JULES_API_KEY = os.environ.get("JULES_API_KEY")
 BLABLADOR_API_KEY = os.environ.get("BLABLADOR_API_KEY")
 BLABLADOR_BASE_URL = "https://api.helmholtz-blablador.fz-juelich.de/v1"
@@ -59,7 +59,14 @@ JULES_API_URL = "https://jules.googleapis.com/v1alpha"
 from github import Github, Auth
 from openai import OpenAI
 
-gh = Github(auth=Auth.Token(GITHUB_TOKEN)) if GITHUB_TOKEN else None
+# Initialize GitHub client
+gh = None
+if GITHUB_TOKEN:
+    try:
+        gh = Github(auth=Auth.Token(GITHUB_TOKEN))
+    except Exception as e:
+        logger.error(f"Failed to initialize GitHub client: {e}")
+
 REPO_NAME = "JsonLord/tiny_web"
 
 # --- Backend Logic ---
@@ -133,10 +140,22 @@ def render_slides_html(repo_name, branch, path):
         with open(f"{work_dir}/index.md", "w") as f: f.write(content)
         subprocess.run(["mkslides", "build", work_dir, "--site-dir", out_dir])
         if os.path.exists(f"{out_dir}/index.html"):
-            # Use absolute path for HF Gradio serving
             return f'<iframe src="/file={os.path.abspath(out_dir)}/index.html" width="100%" height="600px"></iframe>'
         return "Rendering failed."
     except Exception as e: return str(e)
+
+def test_github_connection():
+    global gh
+    # Re-initialize in case token was added later or failed initially
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GITHUB_API_TOKEN") or os.environ.get("GITHUB_API_KEY")
+    if token:
+        try:
+            gh = Github(auth=Auth.Token(token))
+            user = gh.get_user().login
+            return f"✅ Connected as: {user}"
+        except Exception as e:
+            return f"❌ Connection failed: {str(e)}"
+    return "❌ No GitHub Token found (tried GITHUB_TOKEN, GITHUB_API_TOKEN, GITHUB_API_KEY)."
 
 # --- API Endpoints ---
 api_app = FastAPI()
@@ -178,11 +197,18 @@ with gr.Blocks(title="AUX ANALYSIS BACKEND") as demo:
     gr.Markdown("This space orchestrates AI-driven UX audits. API endpoints are available at `/api/...`")
 
     with gr.Row():
-        gr.JSON(label="Status", value={"api": "online", "github": "connected" if gh else "error"})
+        status_json = gr.JSON(label="System Status", value={"api": "online", "github": "init..."})
+        test_gh_btn = gr.Button("Test GitHub Connection")
+
+    gh_output = gr.Markdown()
+
+    test_gh_btn.click(test_github_connection, outputs=[gh_output])
+
+    # Auto-run test on load
+    demo.load(test_github_connection, outputs=[gh_output])
 
 app = gr.mount_gradio_app(api_app, demo, path="/")
 
 if __name__ == "__main__":
     import uvicorn
-    # HF Gradio environment expects the app to run on port 7860
     uvicorn.run(app, host="0.0.0.0", port=7860)

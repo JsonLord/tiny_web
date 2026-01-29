@@ -95,7 +95,7 @@ def get_headers(token):
 
 def start_analysis(theme, profile, url, num_personas, backend_url, token):
     if not theme or not profile or not url:
-        return None, "### ⚠️ Please fill in all fields.", gr.update()
+        return None, "### ⚠️ Please fill in all fields.", gr.update(), "Error: Missing fields"
 
     try:
         payload = {
@@ -105,49 +105,53 @@ def start_analysis(theme, profile, url, num_personas, backend_url, token):
             "num_personas": int(num_personas)
         }
         base = backend_url.rstrip("/")
-        resp = requests.post(f"{base}/api/start_analysis", json=payload, headers=get_headers(token), timeout=30)
+        endpoint = f"{base}/api/start_analysis"
+        resp = requests.post(endpoint, json=payload, headers=get_headers(token), timeout=30)
 
+        log = f"POST {endpoint} -> {resp.status_code}\n"
         if resp.status_code == 200:
             data = resp.json()
-            # Handle HF login page redirect
             if isinstance(data, str) and "<title>" in data:
-                return None, "### ❌ Auth Failed: Check Token in Settings", gr.update()
+                return None, "### ❌ Auth Failed: Check Token in Settings", gr.update(), log + "Response contains HTML (Redirect)"
 
             report_id = data.get("report_id")
             eta = (datetime.now() + timedelta(hours=1)).strftime("%H:%M")
-            return report_id, f"### ✅ Audit Initiated\n**ID:** `{report_id}`\n\nETA: ~1 hour (come back at {eta})", gr.update(selected="results")
+            return report_id, f"### ✅ Audit Initiated\n**ID:** `{report_id}`\n\nETA: ~1 hour (come back at {eta})", gr.update(selected="results"), log + json.dumps(data, indent=2)
 
-        return None, f"### ❌ Error {resp.status_code}\nCheck connection/token.", gr.update()
+        return None, f"### ❌ Error {resp.status_code}\nCheck connection/token.", gr.update(), log + resp.text[:1000]
     except Exception as e:
-        return None, f"### ❌ Connection Error\n{str(e)}", gr.update()
+        return None, f"### ❌ Connection Error\n{str(e)}", gr.update(), f"Exception: {str(e)}"
 
 def fetch_results(report_id, backend_url, token):
     if not report_id:
-        return gr.update(visible=False), "", "", "### ⚠️ Enter a Session ID"
+        return gr.update(visible=False), "", "", "### ⚠️ Enter a Session ID", "Error: No ID"
 
     try:
         base = backend_url.rstrip("/")
-        resp = requests.get(f"{base}/api/results/{report_id}", headers=get_headers(token), timeout=30)
+        endpoint = f"{base}/api/results/{report_id}"
+        resp = requests.get(endpoint, headers=get_headers(token), timeout=30)
 
+        log = f"GET {endpoint} -> {resp.status_code}\n"
         if resp.status_code == 200:
             data = resp.json()
             if data.get("status") == "ready":
-                return gr.update(visible=True), data.get("slides_html"), data.get("report_md"), ""
-            return gr.update(visible=False), "", "", "### ⏳ Still Working...\nThe AI agent is currently performing the analysis. Please check back later."
+                return gr.update(visible=True), data.get("slides_html"), data.get("report_md"), "", log + "Results Ready"
+            return gr.update(visible=False), "", "", "### ⏳ Still Working...\nThe AI agent is currently performing the analysis. Please check back later.", log + "Status: Pending"
 
-        return gr.update(visible=False), "", "", f"### ❌ Error {resp.status_code}"
+        return gr.update(visible=False), "", "", f"### ❌ Error {resp.status_code}", log + resp.text[:1000]
     except Exception as e:
-        return gr.update(visible=False), "", "", f"### ❌ Connection Error\n{str(e)}"
+        return gr.update(visible=False), "", "", f"### ❌ Connection Error\n{str(e)}", f"Exception: {str(e)}"
 
 def test_connection(backend_url, token):
     try:
         base = backend_url.rstrip("/")
-        resp = requests.get(f"{base}/health", headers=get_headers(token), timeout=10)
+        endpoint = f"{base}/health"
+        resp = requests.get(endpoint, headers=get_headers(token), timeout=10)
         if resp.status_code == 200:
-            return "✅ Backend Connected Successfully!"
-        return f"❌ Connection failed ({resp.status_code})"
+            return "✅ Backend Connected Successfully!", f"GET {endpoint} -> 200 OK\n{resp.text}"
+        return f"❌ Connection failed ({resp.status_code})", f"GET {endpoint} -> {resp.status_code}\n{resp.text}"
     except Exception as e:
-        return f"❌ Connection Error: {str(e)}"
+        return f"❌ Connection Error: {str(e)}", f"Exception: {str(e)}"
 
 with gr.Blocks(css=CSS, title="AUX ANALYSIS") as demo:
     gr.HTML("""
@@ -194,23 +198,26 @@ with gr.Blocks(css=CSS, title="AUX ANALYSIS") as demo:
                 test_btn = gr.Button("Test Backend Connection", elem_classes="secondary-btn")
                 test_status = gr.Markdown()
 
+                gr.Markdown("### 🛠️ Debug Logs")
+                debug_output = gr.Code(label="Last Transaction Log", language="json")
+
     # Bindings
     launch_btn.click(
         start_analysis,
         inputs=[theme, profile, url, personas, backend_url_input, token_input],
-        outputs=[report_id_input, launch_status, tabs]
+        outputs=[report_id_input, launch_status, tabs, debug_output]
     )
 
     check_btn.click(
         fetch_results,
         inputs=[report_id_input, backend_url_input, token_input],
-        outputs=[output_container, slides_frame, report_markdown, status_msg]
+        outputs=[output_container, slides_frame, report_markdown, status_msg, debug_output]
     )
 
     test_btn.click(
         test_connection,
         inputs=[backend_url_input, token_input],
-        outputs=[test_status]
+        outputs=[test_status, debug_output]
     )
 
 if __name__ == "__main__":
