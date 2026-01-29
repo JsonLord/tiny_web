@@ -5,8 +5,10 @@ import time
 import json
 from datetime import datetime, timedelta
 
-BACKEND_URL = "https://harvesthealth-xxg-backup.hf.space"
-HF_TOKEN = os.environ.get("HF_TOKEN") # Should be set in Space secrets
+# Default Backend Configuration
+DEFAULT_BACKEND_URL = "https://harvesthealth-xxg-backup.hf.space"
+# Try to get token from env, otherwise leave empty for manual entry
+ENV_TOKEN = os.environ.get("HF_TOKEN") or os.environ.get("GITHUB_API_TOKEN")
 
 # Modern SaaS CSS
 CSS = """
@@ -74,15 +76,24 @@ body, .gradio-container {
     border-radius: 12px !important;
     color: white !important;
 }
+
+.error-box {
+    color: #ef4444;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid #ef4444;
+    padding: 10px;
+    border-radius: 8px;
+    margin: 10px 0;
+}
 """
 
-def get_headers():
+def get_headers(token):
     headers = {}
-    if HF_TOKEN:
-        headers["Authorization"] = f"Bearer {HF_TOKEN}"
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     return headers
 
-def start_analysis(theme, profile, url, num_personas):
+def start_analysis(theme, profile, url, num_personas, backend_url, token):
     if not theme or not profile or not url:
         return None, "### ⚠️ Please fill in all fields.", gr.update()
 
@@ -93,28 +104,50 @@ def start_analysis(theme, profile, url, num_personas):
             "url": url,
             "num_personas": int(num_personas)
         }
-        resp = requests.post(f"{BACKEND_URL}/api/start_analysis", json=payload, headers=get_headers(), timeout=30)
+        # Ensure url ends correctly
+        base = backend_url.rstrip("/")
+        resp = requests.post(f"{base}/api/start_analysis", json=payload, headers=get_headers(token), timeout=30)
+
         if resp.status_code == 200:
             data = resp.json()
+            # If we got HTML back, it means auth failed
+            if isinstance(data, str) and "<title>" in data:
+                return None, "### ❌ Authentication Failed\nBackend returned Hugging Face login page. Please check your Token in the Settings tab.", gr.update()
+
             report_id = data.get("report_id")
             eta = (datetime.now() + timedelta(hours=1)).strftime("%H:%M")
             return report_id, f"### ✅ Analysis Initialized\n**Session ID:** `{report_id}`\n\nETA: Approximately {eta} (1 hour)", gr.update(selected="results")
-        return None, f"### ❌ Error\n{resp.text}", gr.update()
+
+        err_msg = resp.text[:500]
+        if "<title>" in err_msg:
+            return None, "### ❌ Connection Error\nBackend is unreachable or private. Ensure the HF Token is correct in the Settings tab.", gr.update()
+
+        return None, f"### ❌ Error ({resp.status_code})\n{err_msg}", gr.update()
     except Exception as e:
         return None, f"### ❌ Connection Error\n{str(e)}", gr.update()
 
-def fetch_results(report_id):
+def fetch_results(report_id, backend_url, token):
     if not report_id:
         return gr.update(visible=False), gr.update(visible=False), "### ⚠️ Enter a Session ID"
 
     try:
-        resp = requests.get(f"{BACKEND_URL}/api/results/{report_id}", headers=get_headers(), timeout=30)
+        base = backend_url.rstrip("/")
+        resp = requests.get(f"{base}/api/results/{report_id}", headers=get_headers(token), timeout=30)
+
         if resp.status_code == 200:
-            data = resp.json()
+            # Check if response is JSON
+            try:
+                data = resp.json()
+            except:
+                if "<title>" in resp.text:
+                    return gr.update(visible=False), "", "", "### ❌ Authentication Error\nCannot reach backend results. Check Token."
+                return gr.update(visible=False), "", "", "### ❌ Invalid Response from Backend"
+
             if data.get("status") == "ready":
                 return gr.update(visible=True), data.get("slides_html"), data.get("report_md"), ""
             return gr.update(visible=False), "", "", "### ⏳ Still Processing...\nThe audit is currently being performed. Please check back in a while."
-        return gr.update(visible=False), "", "", f"### ❌ Error\n{resp.text}"
+
+        return gr.update(visible=False), "", "", f"### ❌ Error ({resp.status_code})"
     except Exception as e:
         return gr.update(visible=False), "", "", f"### ❌ Connection Error\n{str(e)}"
 
@@ -155,15 +188,23 @@ with gr.Blocks(css=CSS, title="AUX ANALYSIS") as demo:
                         with gr.Tab("Full Strategic Report"):
                             report_markdown = gr.Markdown()
 
+        with gr.Tab("Settings", id="settings"):
+            with gr.Column(elem_classes="glass-card"):
+                gr.Markdown("### ⚙️ Backend Configuration")
+                backend_url_input = gr.Textbox(label="Backend URL", value=DEFAULT_BACKEND_URL)
+                token_input = gr.Textbox(label="Hugging Face Token", placeholder="hf_...", type="password", value=ENV_TOKEN)
+                gr.Markdown("_This token is used to authenticate with the private backend space._")
+
+    # Logic
     launch_btn.click(
         start_analysis,
-        inputs=[theme, profile, url, personas],
+        inputs=[theme, profile, url, personas, backend_url_input, token_input],
         outputs=[report_id_input, launch_status, tabs]
     )
 
     check_btn.click(
         fetch_results,
-        inputs=[report_id_input],
+        inputs=[report_id_input, backend_url_input, token_input],
         outputs=[output_container, slides_frame, report_markdown, status_msg]
     )
 
