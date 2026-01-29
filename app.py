@@ -802,39 +802,66 @@ def render_slides(repo_full_name, branch_name, report_path):
 
     try:
         repo = gh.get_repo(repo_full_name)
+        content = None
 
-        # Determine slides path
-        if "slide" in report_path.lower():
-            slides_path = report_path
-        elif report_path == "user_experience_reports/report.md":
-            slides_path = "user_experience_reports/slides.md"
-        else:
-            # Try to map report_ID.md to slides_ID.md
-            slides_path = report_path.replace("report_", "slides_")
-            if slides_path == report_path: # No replacement happened
-                 slides_path = "user_experience_reports/slides.md" # fallback
+        # Method 1: Check for multi-file slides folder
+        # We check this first if the report_path is in user_experience_reports or if it's default
+        if "user_experience_reports" in report_path:
+            slides_folder = "user_experience_reports/slides"
+            try:
+                folder_contents = repo.get_contents(slides_folder, ref=branch_name)
+                if isinstance(folder_contents, list):
+                    add_log(f"Multi-file slides folder found in branch {branch_name}. Merging...")
+                    slide_files = [c for c in folder_contents if c.name.endswith(".md")]
+                    slide_files.sort(key=lambda x: x.name)
 
-        add_log(f"Attempting to fetch slides from branch '{branch_name}' at path: {slides_path}")
+                    merged_content = ""
+                    for i, sf in enumerate(slide_files):
+                        file_data = repo.get_contents(sf.path, ref=branch_name)
+                        slide_text = file_data.decoded_content.decode("utf-8")
+                        if i > 0:
+                            merged_content += "\n\n---\n\n"
+                        merged_content += slide_text
 
-        try:
-            file_content = repo.get_contents(slides_path, ref=branch_name)
-            content = file_content.decoded_content.decode("utf-8")
-        except Exception as e:
-            if "404" in str(e):
-                add_log(f"Slides file not found at {slides_path}. Attempting fallback...")
-                # Last resort fallback: look for any .md file with 'slides' in the name in the same branch
-                reports = get_reports_in_branch(repo_full_name, branch_name)
-                slides_files = [r for r in reports if "slide" in r.lower()]
-                if slides_files:
-                    slides_path = slides_files[0]
-                    add_log(f"Found alternative slides file: {slides_path}")
-                    file_content = repo.get_contents(slides_path, ref=branch_name)
-                    content = file_content.decoded_content.decode("utf-8")
-                else:
-                    return f"Error: File '{slides_path}' not found in branch '{branch_name}'. No other slide files discovered."
+                    content = merged_content
+                    add_log(f"Successfully merged {len(slide_files)} slides.")
+            except:
+                pass
+
+        if content is None:
+            # Method 2: Single file logic (legacy/fallback)
+            # Determine slides path
+            if "slide" in report_path.lower():
+                slides_path = report_path
+            elif report_path == "user_experience_reports/report.md":
+                slides_path = "user_experience_reports/slides.md"
             else:
-                add_log(f"Error fetching slides: {e}")
-                return f"Error fetching slides: {str(e)}"
+                # Try to map report_ID.md to slides_ID.md
+                slides_path = report_path.replace("report_", "slides_")
+                if slides_path == report_path: # No replacement happened
+                     slides_path = "user_experience_reports/slides.md" # fallback
+
+            add_log(f"Attempting to fetch single-file slides from branch '{branch_name}' at path: {slides_path}")
+
+            try:
+                file_content = repo.get_contents(slides_path, ref=branch_name)
+                content = file_content.decoded_content.decode("utf-8")
+            except Exception as e:
+                if "404" in str(e):
+                    add_log(f"Slides file not found at {slides_path}. Attempting fallback...")
+                    # Last resort fallback: look for any .md file with 'slides' in the name in the same branch
+                    reports = get_reports_in_branch(repo_full_name, branch_name)
+                    slides_files = [r for r in reports if "slide" in r.lower() and "/slides/" not in r]
+                    if slides_files:
+                        slides_path = slides_files[0]
+                        add_log(f"Found alternative slides file: {slides_path}")
+                        file_content = repo.get_contents(slides_path, ref=branch_name)
+                        content = file_content.decoded_content.decode("utf-8")
+                    else:
+                        return f"Error: File '{slides_path}' not found in branch '{branch_name}'. No other slide files discovered."
+                else:
+                    add_log(f"Error fetching slides: {e}")
+                    return f"Error fetching slides: {str(e)}"
 
         # Prepare workspace
         report_id = str(uuid.uuid4())[:8]
@@ -875,7 +902,10 @@ def monitor_repo_for_reports():
         new_content_found = False
         for branch_name in branches[:25]: # Check top 25 recent branches
             reports = get_reports_in_branch(REPO_NAME, branch_name)
-            for report_file in reports:
+            # Filter: automated monitor only cares about main report files, not individual slides
+            monitor_reports = [r for r in reports if "report" in r.lower() and "/slides/" not in r.lower()]
+
+            for report_file in monitor_reports:
                 report_key = f"{branch_name}/{report_file}"
                 if report_key not in processed_prs:
                     try:

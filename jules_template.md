@@ -347,11 +347,35 @@ What happens if nothing changes?
 
 ## 5. PRESENTATION EXPORT (NEW)
 
-In addition to report.md, generate:
+In addition to report_{{report_id}}.md, generate individual slide files in:
 
-`user_experience_reports/slides_{{report_id}}.md`
+`/user_experience_reports/slides/`
 
-This file contains presentation cards compatible with mkslides.
+Each slide must be its own `.md` file, named with a 2-digit prefix for ordering.
+
+### Required Files:
+1. `01_executive_summary.md`
+2. `02_persona.md`
+3. `03_ux_failure_map.md`
+4. `04_key_evidence.md`
+5. `05_priority_matrix.md`
+6. `06_roadmap.md`
+7. `07_before_after_layouts.md`
+8. `08_strategic_close.md`
+
+---
+
+### Slide Design Guidelines for mkslides (Reveal.js)
+
+For best rendering in the orchestrator app:
+
+1. **Hierarchy**: Use `## H2` for the main heading of each slide.
+2. **Conciseness**: Limit content to 4-6 bullet points per slide. Use bold text for key terms.
+3. **Components**:
+   - Use Markdown tables for the Failure Map and Priority Matrix.
+   - Use `:::card` blocks for specific recommendations or quotes.
+4. **Formatting**: Do NOT include `---` separators within these individual files. The orchestrator will automatically merge them into a single presentation.
+5. **Title Slide**: You may optionally include `00_title.md` with an `# H1` title.
 
 ---
 
@@ -360,44 +384,18 @@ This file contains presentation cards compatible with mkslides.
 Clone:
 
 ```bash
-git clone https://github.com/MartenBE/mkslides.git
-cd mkslides
-pip install -r requirements.txt
+git clone --recursive https://github.com/MartenBE/mkslides.git external/mkslides
+cd external/mkslides
+# Ensure compatibility
+sed -i 's/requires-python = ">=3.13"/requires-python = ">=3.12"/' pyproject.toml
+pip install .
 ```
 
 Then render:
 
 ```bash
-mkslides build ../user_experience_reports/
+mkslides build ../user_experience_reports/slides/ --site-dir ../user_experience_reports/slides_rendered/
 ```
-
----
-
-### slides.md Format Rules
-
-Each slide is a markdown card:
-
----
-
-# Slide Title
-
-## Key Point
-
-* Bullet
-* Bullet
-
----
-
-Slides must include:
-
-1. Executive Summary
-2. Persona
-3. UX Failure Map
-4. Key Evidence
-5. Priority Matrix
-6. Roadmap
-7. Before / After layouts
-8. Strategic Close
 
 ---
 
@@ -443,7 +441,7 @@ Cards must be reusable in mkslides.
 
 Once complete:
 
-Confirm report_{{report_id}}.md + slides_{{report_id}}.md are written.
+Confirm report_{{report_id}}.md and individual slide files in `/user_experience_reports/slides/` are written.
 
 Session will open PR automatically.
 
