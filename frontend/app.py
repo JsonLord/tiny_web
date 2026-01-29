@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 # Default Backend Configuration
 DEFAULT_BACKEND_URL = "https://harvesthealth-xxg-backup.hf.space"
-# Try to get token from env, otherwise leave empty for manual entry
+# Try to get token from env
 ENV_TOKEN = os.environ.get("HF_TOKEN") or os.environ.get("GITHUB_API_TOKEN")
 
 # Modern SaaS CSS
@@ -35,12 +35,12 @@ body, .gradio-container {
 }
 
 .hero-title {
-    font-size: 3.5rem;
+    font-size: 4rem;
     font-weight: 800;
     background: linear-gradient(90deg, #818cf8, #c084fc);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
-    margin-bottom: 10px;
+    margin-bottom: 20px;
 }
 
 .glass-card {
@@ -50,6 +50,7 @@ body, .gradio-container {
     border-radius: 24px !important;
     padding: 32px !important;
     box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5) !important;
+    margin-bottom: 20px;
 }
 
 .primary-btn {
@@ -57,11 +58,12 @@ body, .gradio-container {
     border: none !important;
     color: white !important;
     font-weight: 700 !important;
-    padding: 12px 24px !important;
+    padding: 14px 28px !important;
     border-radius: 12px !important;
     transition: all 0.3s ease !important;
     text-transform: uppercase;
     letter-spacing: 0.05em;
+    cursor: pointer;
 }
 
 .primary-btn:hover {
@@ -69,21 +71,19 @@ body, .gradio-container {
     box-shadow: 0 10px 15px -3px rgba(139, 92, 246, 0.5) !important;
 }
 
-/* Customizing Gradio Components */
+.secondary-btn {
+    background: rgba(255, 255, 255, 0.05) !important;
+    border: 1px solid var(--border-color) !important;
+    color: white !important;
+    padding: 10px 20px !important;
+    border-radius: 10px !important;
+}
+
 .gr-text-input, .gr-textarea, .gr-slider {
     background: rgba(15, 23, 42, 0.6) !important;
     border: 1px solid var(--border-color) !important;
     border-radius: 12px !important;
     color: white !important;
-}
-
-.error-box {
-    color: #ef4444;
-    background: rgba(239, 68, 68, 0.1);
-    border: 1px solid #ef4444;
-    padding: 10px;
-    border-radius: 8px;
-    margin: 10px 0;
 }
 """
 
@@ -104,57 +104,56 @@ def start_analysis(theme, profile, url, num_personas, backend_url, token):
             "url": url,
             "num_personas": int(num_personas)
         }
-        # Ensure url ends correctly
         base = backend_url.rstrip("/")
         resp = requests.post(f"{base}/api/start_analysis", json=payload, headers=get_headers(token), timeout=30)
 
         if resp.status_code == 200:
             data = resp.json()
-            # If we got HTML back, it means auth failed
+            # Handle HF login page redirect
             if isinstance(data, str) and "<title>" in data:
-                return None, "### ❌ Authentication Failed\nBackend returned Hugging Face login page. Please check your Token in the Settings tab.", gr.update()
+                return None, "### ❌ Auth Failed: Check Token in Settings", gr.update()
 
             report_id = data.get("report_id")
             eta = (datetime.now() + timedelta(hours=1)).strftime("%H:%M")
-            return report_id, f"### ✅ Analysis Initialized\n**Session ID:** `{report_id}`\n\nETA: Approximately {eta} (1 hour)", gr.update(selected="results")
+            return report_id, f"### ✅ Audit Initiated\n**ID:** `{report_id}`\n\nETA: ~1 hour (come back at {eta})", gr.update(selected="results")
 
-        err_msg = resp.text[:500]
-        if "<title>" in err_msg:
-            return None, "### ❌ Connection Error\nBackend is unreachable or private. Ensure the HF Token is correct in the Settings tab.", gr.update()
-
-        return None, f"### ❌ Error ({resp.status_code})\n{err_msg}", gr.update()
+        return None, f"### ❌ Error {resp.status_code}\nCheck connection/token.", gr.update()
     except Exception as e:
         return None, f"### ❌ Connection Error\n{str(e)}", gr.update()
 
 def fetch_results(report_id, backend_url, token):
     if not report_id:
-        return gr.update(visible=False), gr.update(visible=False), "### ⚠️ Enter a Session ID"
+        return gr.update(visible=False), "", "", "### ⚠️ Enter a Session ID"
 
     try:
         base = backend_url.rstrip("/")
         resp = requests.get(f"{base}/api/results/{report_id}", headers=get_headers(token), timeout=30)
 
         if resp.status_code == 200:
-            # Check if response is JSON
-            try:
-                data = resp.json()
-            except:
-                if "<title>" in resp.text:
-                    return gr.update(visible=False), "", "", "### ❌ Authentication Error\nCannot reach backend results. Check Token."
-                return gr.update(visible=False), "", "", "### ❌ Invalid Response from Backend"
-
+            data = resp.json()
             if data.get("status") == "ready":
                 return gr.update(visible=True), data.get("slides_html"), data.get("report_md"), ""
-            return gr.update(visible=False), "", "", "### ⏳ Still Processing...\nThe audit is currently being performed. Please check back in a while."
+            return gr.update(visible=False), "", "", "### ⏳ Still Working...\nThe AI agent is currently performing the analysis. Please check back later."
 
-        return gr.update(visible=False), "", "", f"### ❌ Error ({resp.status_code})"
+        return gr.update(visible=False), "", "", f"### ❌ Error {resp.status_code}"
     except Exception as e:
         return gr.update(visible=False), "", "", f"### ❌ Connection Error\n{str(e)}"
+
+def test_connection(backend_url, token):
+    try:
+        base = backend_url.rstrip("/")
+        resp = requests.get(f"{base}/health", headers=get_headers(token), timeout=10)
+        if resp.status_code == 200:
+            return "✅ Backend Connected Successfully!"
+        return f"❌ Connection failed ({resp.status_code})"
+    except Exception as e:
+        return f"❌ Connection Error: {str(e)}"
 
 with gr.Blocks(css=CSS, title="AUX ANALYSIS") as demo:
     gr.HTML("""
     <div class='hero-section'>
         <h1 class='hero-title'>AUX ANALYSIS</h1>
+        <p style='color: #94a3b8; font-size: 1.1rem;'>Professional AI-Driven User Experience Audits</p>
     </div>
     """)
 
@@ -163,39 +162,39 @@ with gr.Blocks(css=CSS, title="AUX ANALYSIS") as demo:
             with gr.Column(elem_classes="glass-card"):
                 with gr.Row():
                     with gr.Column():
-                        theme = gr.Textbox(label="Analysis Theme", placeholder="e.g. E-commerce Checkout Flow", info="What core experience should be audited?")
-                        profile = gr.TextArea(label="Target User Profile", placeholder="e.g. Tech-savvy millennials looking for sustainable coffee...", info="Who is the persona to simulate?")
+                        theme = gr.Textbox(label="Analysis Focus", placeholder="e.g. Mobile Signup Flow", info="What core experience should be analyzed?")
+                        profile = gr.TextArea(label="Persona Background", placeholder="e.g. Professional photographer looking for cloud storage...", info="Who is the simulated user?")
                     with gr.Column():
-                        url = gr.Textbox(label="Target URL", value="https://", info="The website to interact with.")
-                        personas = gr.Slider(label="Persona Intensity", minimum=1, maximum=3, step=1, value=1, info="Number of unique user simulations.")
+                        url = gr.Textbox(label="Audit URL", value="https://", info="The destination for the AI scan.")
+                        personas = gr.Slider(label="Simulated Sessions", minimum=1, maximum=3, step=1, value=1)
 
-                launch_btn = gr.Button("🚀 Start AI Deep Scan", elem_classes="primary-btn")
+                launch_btn = gr.Button("🔥 Start AI Analysis", elem_classes="primary-btn")
                 launch_status = gr.Markdown()
 
         with gr.Tab("Results Portal", id="results"):
             with gr.Column(elem_classes="glass-card"):
-                gr.Markdown("### 🔍 Retrieve Your Audit")
+                gr.Markdown("### 🔍 Fetch Strategic Report")
                 report_id_input = gr.Textbox(label="Session ID", placeholder="Paste your Session ID here...")
-                check_btn = gr.Button("⚡ Fetch Analysis Results", elem_classes="primary-btn")
+                check_btn = gr.Button("⚡ Retrieve Deliverables", elem_classes="primary-btn")
 
                 status_msg = gr.Markdown()
 
                 with gr.Column(visible=False) as output_container:
                     with gr.Tabs() as result_view_tabs:
-                        with gr.Tab("Presentation Slides"):
+                        with gr.Tab("Presentation"):
                             slides_frame = gr.HTML()
-                            skip_btn = gr.Button("View Full Written Report →")
-                        with gr.Tab("Full Strategic Report"):
+                        with gr.Tab("Written Report"):
                             report_markdown = gr.Markdown()
 
         with gr.Tab("Settings", id="settings"):
             with gr.Column(elem_classes="glass-card"):
-                gr.Markdown("### ⚙️ Backend Configuration")
-                backend_url_input = gr.Textbox(label="Backend URL", value=DEFAULT_BACKEND_URL)
-                token_input = gr.Textbox(label="Hugging Face Token", placeholder="hf_...", type="password", value=ENV_TOKEN)
-                gr.Markdown("_This token is used to authenticate with the private backend space._")
+                gr.Markdown("### ⚙️ System Configuration")
+                backend_url_input = gr.Textbox(label="Backend Orchestrator URL", value=DEFAULT_BACKEND_URL)
+                token_input = gr.Textbox(label="Access Token", placeholder="hf_...", type="password", value=ENV_TOKEN)
+                test_btn = gr.Button("Test Backend Connection", elem_classes="secondary-btn")
+                test_status = gr.Markdown()
 
-    # Logic
+    # Bindings
     launch_btn.click(
         start_analysis,
         inputs=[theme, profile, url, personas, backend_url_input, token_input],
@@ -206,6 +205,12 @@ with gr.Blocks(css=CSS, title="AUX ANALYSIS") as demo:
         fetch_results,
         inputs=[report_id_input, backend_url_input, token_input],
         outputs=[output_container, slides_frame, report_markdown, status_msg]
+    )
+
+    test_btn.click(
+        test_connection,
+        inputs=[backend_url_input, token_input],
+        outputs=[test_status]
     )
 
 if __name__ == "__main__":

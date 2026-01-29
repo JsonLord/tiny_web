@@ -26,3 +26,5 @@ huggingface-hub
 lxml_html_clean
 beautifulsoup4
 playwright
+fastapi
+uvicorn
