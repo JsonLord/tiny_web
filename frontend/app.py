@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 # Default Backend Configuration
 DEFAULT_BACKEND_URL = "https://harvesthealth-xxg-backup.hf.space"
 # Try to get token from env
-ENV_TOKEN = os.environ.get("HF_TOKEN") or os.environ.get("GITHUB_API_TOKEN")
+ENV_TOKEN = os.environ.get("HF_TOKEN") or os.environ.get("GITHUB_API_TOKEN") or os.environ.get("GITHUB_API_KEY")
 
 # Modern SaaS CSS
 CSS = """
@@ -106,19 +106,33 @@ def start_analysis(theme, profile, url, num_personas, backend_url, token):
         }
         base = backend_url.rstrip("/")
         endpoint = f"{base}/api/start_analysis"
-        resp = requests.post(endpoint, json=payload, headers=get_headers(token), timeout=30)
 
-        log = f"POST {endpoint} -> {resp.status_code}\n"
+        start_time = time.time()
+        resp = requests.post(endpoint, json=payload, headers=get_headers(token), timeout=45)
+        duration = time.time() - start_time
+
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "method": "POST",
+            "endpoint": endpoint,
+            "status": resp.status_code,
+            "duration": f"{duration:.2f}s",
+            "response_snippet": resp.text[:500]
+        }
+
         if resp.status_code == 200:
-            data = resp.json()
-            if isinstance(data, str) and "<title>" in data:
-                return None, "### ❌ Auth Failed: Check Token in Settings", gr.update(), log + "Response contains HTML (Redirect)"
+            try:
+                data = resp.json()
+                if isinstance(data, str) and "<title>" in data:
+                     return None, "### ❌ Auth Failed\nBackend returned HTML. Check Token.", gr.update(), json.dumps(log_entry, indent=2)
 
-            report_id = data.get("report_id")
-            eta = (datetime.now() + timedelta(hours=1)).strftime("%H:%M")
-            return report_id, f"### ✅ Audit Initiated\n**ID:** `{report_id}`\n\nETA: ~1 hour (come back at {eta})", gr.update(selected="results"), log + json.dumps(data, indent=2)
+                report_id = data.get("report_id")
+                eta = (datetime.now() + timedelta(hours=1)).strftime("%H:%M")
+                return report_id, f"### ✅ Audit Initiated\n**ID:** `{report_id}`\n\nETA: Approximately {eta} (1 hour)", gr.update(selected="results"), json.dumps(log_entry, indent=2)
+            except:
+                return None, "### ❌ Invalid Response\nFailed to parse JSON.", gr.update(), json.dumps(log_entry, indent=2)
 
-        return None, f"### ❌ Error {resp.status_code}\nCheck connection/token.", gr.update(), log + resp.text[:1000]
+        return None, f"### ❌ Error {resp.status_code}\nVerify URL and Token.", gr.update(), json.dumps(log_entry, indent=2)
     except Exception as e:
         return None, f"### ❌ Connection Error\n{str(e)}", gr.update(), f"Exception: {str(e)}"
 
@@ -129,16 +143,17 @@ def fetch_results(report_id, backend_url, token):
     try:
         base = backend_url.rstrip("/")
         endpoint = f"{base}/api/results/{report_id}"
-        resp = requests.get(endpoint, headers=get_headers(token), timeout=30)
 
-        log = f"GET {endpoint} -> {resp.status_code}\n"
+        resp = requests.get(endpoint, headers=get_headers(token), timeout=45)
+        log_entry = {"status": resp.status_code, "endpoint": endpoint}
+
         if resp.status_code == 200:
             data = resp.json()
             if data.get("status") == "ready":
-                return gr.update(visible=True), data.get("slides_html"), data.get("report_md"), "", log + "Results Ready"
-            return gr.update(visible=False), "", "", "### ⏳ Still Working...\nThe AI agent is currently performing the analysis. Please check back later.", log + "Status: Pending"
+                return gr.update(visible=True), data.get("slides_html"), data.get("report_md"), "", json.dumps(log_entry, indent=2)
+            return gr.update(visible=False), "", "", "### ⏳ Still Working...\nThe AI agent is currently performing the analysis. Please check back later.", json.dumps(log_entry, indent=2)
 
-        return gr.update(visible=False), "", "", f"### ❌ Error {resp.status_code}", log + resp.text[:1000]
+        return gr.update(visible=False), "", "", f"### ❌ Error {resp.status_code}", json.dumps(log_entry, indent=2)
     except Exception as e:
         return gr.update(visible=False), "", "", f"### ❌ Connection Error\n{str(e)}", f"Exception: {str(e)}"
 
@@ -146,10 +161,12 @@ def test_connection(backend_url, token):
     try:
         base = backend_url.rstrip("/")
         endpoint = f"{base}/health"
-        resp = requests.get(endpoint, headers=get_headers(token), timeout=10)
+        resp = requests.get(endpoint, headers=get_headers(token), timeout=15)
+
+        log_entry = {"status": resp.status_code, "response": resp.text[:200]}
         if resp.status_code == 200:
-            return "✅ Backend Connected Successfully!", f"GET {endpoint} -> 200 OK\n{resp.text}"
-        return f"❌ Connection failed ({resp.status_code})", f"GET {endpoint} -> {resp.status_code}\n{resp.text}"
+            return "✅ Backend Connected Successfully!", json.dumps(log_entry, indent=2)
+        return f"❌ Connection failed ({resp.status_code})", json.dumps(log_entry, indent=2)
     except Exception as e:
         return f"❌ Connection Error: {str(e)}", f"Exception: {str(e)}"
 
@@ -166,10 +183,10 @@ with gr.Blocks(css=CSS, title="AUX ANALYSIS") as demo:
             with gr.Column(elem_classes="glass-card"):
                 with gr.Row():
                     with gr.Column():
-                        theme = gr.Textbox(label="Analysis Focus", placeholder="e.g. Mobile Signup Flow", info="What core experience should be analyzed?")
-                        profile = gr.TextArea(label="Persona Background", placeholder="e.g. Professional photographer looking for cloud storage...", info="Who is the simulated user?")
+                        theme = gr.Textbox(label="Analysis Focus", placeholder="e.g. Mobile Signup Flow")
+                        profile = gr.TextArea(label="Persona Background", placeholder="e.g. Professional photographer...")
                     with gr.Column():
-                        url = gr.Textbox(label="Audit URL", value="https://", info="The destination for the AI scan.")
+                        url = gr.Textbox(label="Audit URL", value="https://")
                         personas = gr.Slider(label="Simulated Sessions", minimum=1, maximum=3, step=1, value=1)
 
                 launch_btn = gr.Button("🔥 Start AI Analysis", elem_classes="primary-btn")
@@ -184,7 +201,7 @@ with gr.Blocks(css=CSS, title="AUX ANALYSIS") as demo:
                 status_msg = gr.Markdown()
 
                 with gr.Column(visible=False) as output_container:
-                    with gr.Tabs() as result_view_tabs:
+                    with gr.Tabs():
                         with gr.Tab("Presentation"):
                             slides_frame = gr.HTML()
                         with gr.Tab("Written Report"):
@@ -201,24 +218,9 @@ with gr.Blocks(css=CSS, title="AUX ANALYSIS") as demo:
                 gr.Markdown("### 🛠️ Debug Logs")
                 debug_output = gr.Code(label="Last Transaction Log", language="json")
 
-    # Bindings
-    launch_btn.click(
-        start_analysis,
-        inputs=[theme, profile, url, personas, backend_url_input, token_input],
-        outputs=[report_id_input, launch_status, tabs, debug_output]
-    )
-
-    check_btn.click(
-        fetch_results,
-        inputs=[report_id_input, backend_url_input, token_input],
-        outputs=[output_container, slides_frame, report_markdown, status_msg, debug_output]
-    )
-
-    test_btn.click(
-        test_connection,
-        inputs=[backend_url_input, token_input],
-        outputs=[test_status, debug_output]
-    )
+    launch_btn.click(start_analysis, inputs=[theme, profile, url, personas, backend_url_input, token_input], outputs=[report_id_input, launch_status, tabs, debug_output])
+    check_btn.click(fetch_results, inputs=[report_id_input, backend_url_input, token_input], outputs=[output_container, slides_frame, report_markdown, status_msg, debug_output])
+    test_btn.click(test_connection, inputs=[backend_url_input, token_input], outputs=[test_status, debug_output])
 
 if __name__ == "__main__":
     demo.launch()

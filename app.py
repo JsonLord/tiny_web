@@ -39,7 +39,8 @@ def setup_external():
         pyproject_path = "external/mkslides/pyproject.toml"
         if os.path.exists(pyproject_path):
             with open(pyproject_path, "r") as f: content = f.read()
-            content = content.replace('requires-python = ">=3.13"', 'requires-python = ">=3.12"')
+            # Robust patch to allow Python 3.10
+            content = re.sub(r'requires-python\s*=\s*">=3\.\d+"', 'requires-python = ">=3.10"', content)
             with open(pyproject_path, "w") as f: f.write(content)
         subprocess.run(["pip", "install", "./external/mkslides"])
 
@@ -59,22 +60,29 @@ JULES_API_URL = "https://jules.googleapis.com/v1alpha"
 from github import Github, Auth
 from openai import OpenAI
 
-# Initialize GitHub client
-gh = None
-if GITHUB_TOKEN:
-    try:
-        gh = Github(auth=Auth.Token(GITHUB_TOKEN))
-    except Exception as e:
-        logger.error(f"Failed to initialize GitHub client: {e}")
+# Global GitHub client
+gh_client = None
 
+def init_gh():
+    global gh_client
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GITHUB_API_TOKEN") or os.environ.get("GITHUB_API_KEY")
+    if token:
+        try:
+            gh_client = Github(auth=Auth.Token(token))
+            return f"✅ Connected as: {gh_client.get_user().login}"
+        except Exception as e:
+            return f"❌ Connection failed: {str(e)}"
+    return "❌ No GitHub Token found."
+
+init_gh()
 REPO_NAME = "JsonLord/tiny_web"
 
 # --- Backend Logic ---
 
 def get_repo_branches(repo_full_name):
-    if not gh: return ["main"]
+    if not gh_client: return ["main"]
     try:
-        repo = gh.get_repo(repo_full_name)
+        repo = gh_client.get_repo(repo_full_name)
         branches = list(repo.get_branches())
         def fetch_date(b):
             try: return (b.name, repo.get_commit(b.commit.sha).commit.author.date)
@@ -99,7 +107,7 @@ def generate_tasks(theme, customer_profile):
     return [f"Task {i+1} on {theme}" for i in range(10)]
 
 def initiate_jules_session(persona, tasks, url, report_id):
-    if not JULES_API_KEY: return {"error": "No API Key"}
+    if not JULES_API_KEY: return {"error": "No Jules API Key"}
     template_path = "jules_template.md"
     if not os.path.exists(template_path): return {"error": "Template missing"}
 
@@ -120,9 +128,9 @@ def initiate_jules_session(persona, tasks, url, report_id):
     return requests.post(f"{JULES_API_URL}/sessions", headers=headers, json=data).json()
 
 def get_reports_in_branch(repo_name, branch, filter_type=None):
-    if not gh: return []
+    if not gh_client: return []
     try:
-        repo = gh.get_repo(repo_name)
+        repo = gh_client.get_repo(repo_name)
         tree = repo.get_git_tree(branch, recursive=True).tree
         files = [e.path for e in tree if e.type == "blob" and e.path.endswith(".md")]
         if filter_type == "report": files = [f for f in files if "slide" not in f.lower()]
@@ -132,7 +140,7 @@ def get_reports_in_branch(repo_name, branch, filter_type=None):
 
 def render_slides_html(repo_name, branch, path):
     try:
-        repo = gh.get_repo(repo_name)
+        repo = gh_client.get_repo(repo_name)
         content = repo.get_contents(path, ref=branch).decoded_content.decode("utf-8")
         uid = str(uuid.uuid4())[:8]
         work_dir, out_dir = f"work_{uid}", f"site_{uid}"
@@ -144,20 +152,7 @@ def render_slides_html(repo_name, branch, path):
         return "Rendering failed."
     except Exception as e: return str(e)
 
-def test_github_connection():
-    global gh
-    # Re-initialize in case token was added later or failed initially
-    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GITHUB_API_TOKEN") or os.environ.get("GITHUB_API_KEY")
-    if token:
-        try:
-            gh = Github(auth=Auth.Token(token))
-            user = gh.get_user().login
-            return f"✅ Connected as: {user}"
-        except Exception as e:
-            return f"❌ Connection failed: {str(e)}"
-    return "❌ No GitHub Token found (tried GITHUB_TOKEN, GITHUB_API_TOKEN, GITHUB_API_KEY)."
-
-# --- API Endpoints ---
+# --- FastAPI Setup ---
 api_app = FastAPI()
 
 class AnalysisRequest(BaseModel):
@@ -185,7 +180,7 @@ def get_results_api(report_id: str):
         reports = get_reports_in_branch(REPO_NAME, b, filter_type="report")
         for r in reports:
             if report_id in r:
-                content = gh.get_repo(REPO_NAME).get_contents(r, ref=b).decoded_content.decode("utf-8")
+                content = gh_client.get_repo(REPO_NAME).get_contents(r, ref=b).decoded_content.decode("utf-8")
                 slides = get_reports_in_branch(REPO_NAME, b, filter_type="slides")
                 slides_html = render_slides_html(REPO_NAME, b, slides[0]) if slides else "No slides found"
                 return {"status": "ready", "report_md": content, "slides_html": slides_html}
@@ -194,21 +189,20 @@ def get_results_api(report_id: str):
 # --- Gradio Interface ---
 with gr.Blocks(title="AUX ANALYSIS BACKEND") as demo:
     gr.Markdown("# AUX ANALYSIS BACKEND")
-    gr.Markdown("This space orchestrates AI-driven UX audits. API endpoints are available at `/api/...`")
+    gr.Markdown("This space orchestrates AI-driven UX audits.")
 
     with gr.Row():
         status_json = gr.JSON(label="System Status", value={"api": "online", "github": "init..."})
         test_gh_btn = gr.Button("Test GitHub Connection")
 
     gh_output = gr.Markdown()
+    test_gh_btn.click(init_gh, outputs=[gh_output])
+    demo.load(init_gh, outputs=[gh_output])
 
-    test_gh_btn.click(test_github_connection, outputs=[gh_output])
-
-    # Auto-run test on load
-    demo.load(test_github_connection, outputs=[gh_output])
-
+# --- Mount Gradio onto FastAPI ---
 app = gr.mount_gradio_app(api_app, demo, path="/")
 
 if __name__ == "__main__":
     import uvicorn
+    # Use 7860 for HF compatibility
     uvicorn.run(app, host="0.0.0.0", port=7860)
