@@ -9,200 +9,136 @@ import uuid
 import shutil
 import logging
 from datetime import datetime
-from fastapi import FastAPI
-from pydantic import BaseModel
 import gradio as gr
 import requests
+from github import Github, Auth
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# --- External Tools Setup ---
-def setup_external():
-    # Clone TinyTroupe
-    if not os.path.exists("external/TinyTroupe"):
-        logger.info("Cloning TinyTroupe...")
-        os.makedirs("external", exist_ok=True)
-        subprocess.run([
-            "git", "clone", "-b", "fix/jules-final-submission-branch",
-            "https://github.com/JsonLord/TinyTroupe.git", "external/TinyTroupe"
-        ])
-
-    # Clone mkslides
-    if not os.path.exists("external/mkslides"):
-        logger.info("Cloning mkslides...")
-        subprocess.run([
-            "git", "clone", "--recursive",
-            "https://github.com/MartenBE/mkslides.git", "external/mkslides"
-        ])
-        pyproject_path = "external/mkslides/pyproject.toml"
-        if os.path.exists(pyproject_path):
-            with open(pyproject_path, "r") as f: content = f.read()
-            # Robust patch to allow Python 3.10
-            content = re.sub(r'requires-python\s*=\s*">=3\.\d+"', 'requires-python = ">=3.10"', content)
-            with open(pyproject_path, "w") as f: f.write(content)
-        subprocess.run(["pip", "install", "./external/mkslides"])
-
-setup_external()
-
-# Add external/TinyTroupe to sys.path
-TINYTROUPE_PATH = os.path.join(os.getcwd(), "external", "TinyTroupe")
-sys.path.append(TINYTROUPE_PATH)
-
-# Configuration from environment variables
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN") or os.environ.get("GITHUB_API_TOKEN") or os.environ.get("GITHUB_API_KEY")
+# Configuration
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 JULES_API_KEY = os.environ.get("JULES_API_KEY")
 BLABLADOR_API_KEY = os.environ.get("BLABLADOR_API_KEY")
-BLABLADOR_BASE_URL = "https://api.helmholtz-blablador.fz-juelich.de/v1"
 JULES_API_URL = "https://jules.googleapis.com/v1alpha"
-
-from github import Github, Auth
-from openai import OpenAI
-
-# Global GitHub client
-gh_client = None
-
-def init_gh():
-    global gh_client
-    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GITHUB_API_TOKEN") or os.environ.get("GITHUB_API_KEY")
-    if token:
-        try:
-            gh_client = Github(auth=Auth.Token(token))
-            return f"✅ Connected as: {gh_client.get_user().login}"
-        except Exception as e:
-            return f"❌ Connection failed: {str(e)}"
-    return "❌ No GitHub Token found."
-
-init_gh()
 REPO_NAME = "JsonLord/tiny_web"
 
-# --- Backend Logic ---
+gh_client = None
+def init_gh():
+    global gh_client
+    if GITHUB_TOKEN:
+        try:
+            gh_client = Github(auth=Auth.Token(GITHUB_TOKEN))
+            return True
+        except: return False
+    return False
 
-def get_repo_branches(repo_full_name):
-    if not gh_client: return ["main"]
+MKSLIDES_READY = False
+def setup_mkslides():
+    global MKSLIDES_READY
+    if MKSLIDES_READY: return
     try:
-        repo = gh_client.get_repo(repo_full_name)
-        branches = list(repo.get_branches())
-        def fetch_date(b):
-            try: return (b.name, repo.get_commit(b.commit.sha).commit.author.date)
-            except: return (b.name, datetime.min)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as ex:
-            info = list(ex.map(fetch_date, branches))
-        info.sort(key=lambda x: x[1], reverse=True)
-        return [b[0] for b in info]
-    except: return ["main"]
+        if not os.path.exists("external/mkslides"):
+            os.makedirs("external", exist_ok=True)
+            subprocess.run(["git", "clone", "--recursive", "https://github.com/MartenBE/mkslides.git", "external/mkslides"], check=True)
+            pyproject = "external/mkslides/pyproject.toml"
+            if os.path.exists(pyproject):
+                with open(pyproject, "r") as f: content = f.read()
+                content = re.sub(r'requires-python = ">=3.13"', 'requires-python = ">=3.10"', content)
+                with open(pyproject, "w") as f: f.write(content)
+            subprocess.run([sys.executable, "-m", "pip", "install", "./external/mkslides"], check=True)
+        MKSLIDES_READY = True
+    except Exception as e:
+        print(f"mkslides setup error: {e}")
 
-def generate_personas(theme, customer_profile, num_personas):
-    final_personas = []
-    for i in range(int(num_personas)):
-        final_personas.append({
-            "name": f"User_{uuid.uuid4().hex[:4]}",
-            "minibio": f"Persona interested in {theme}",
-            "persona": {"occupation": theme, "profile": customer_profile}
-        })
-    return final_personas
-
-def generate_tasks(theme, customer_profile):
-    return [f"Task {i+1} on {theme}" for i in range(10)]
-
-def initiate_jules_session(persona, tasks, url, report_id):
-    if not JULES_API_KEY: return {"error": "No Jules API Key"}
-    template_path = "jules_template.md"
-    if not os.path.exists(template_path): return {"error": "Template missing"}
-
-    with open(template_path, "r") as f: template = f.read()
-    prompt = template.replace("{{persona_context}}", json.dumps(persona))
-    prompt = prompt.replace("{{tasks_list}}", json.dumps(tasks))
-    prompt = prompt.replace("{{url}}", url)
-    prompt = prompt.replace("{{report_id}}", report_id)
-    prompt = prompt.replace("{{blablador_api_key}}", BLABLADOR_API_KEY or "")
-
-    headers = {"X-Goog-Api-Key": JULES_API_KEY, "Content-Type": "application/json"}
-    data = {
-        "prompt": prompt,
-        "sourceContext": {"source": f"sources/github/{REPO_NAME}", "githubRepoContext": {"startingBranch": "main"}},
-        "automationMode": "AUTO_CREATE_PR",
-        "title": f"AUX ANALYSIS [{report_id}]"
-    }
-    return requests.post(f"{JULES_API_URL}/sessions", headers=headers, json=data).json()
-
-def get_reports_in_branch(repo_name, branch, filter_type=None):
-    if not gh_client: return []
+def api_get_branches():
+    if not gh_client: init_gh()
     try:
-        repo = gh_client.get_repo(repo_name)
-        tree = repo.get_git_tree(branch, recursive=True).tree
-        files = [e.path for e in tree if e.type == "blob" and e.path.endswith(".md")]
-        if filter_type == "report": files = [f for f in files if "slide" not in f.lower()]
-        elif filter_type == "slides": files = [f for f in files if "slide" in f.lower()]
-        return files
-    except: return []
+        repo = gh_client.get_repo(REPO_NAME)
+        return [b.name for b in repo.get_branches()]
+    except:
+        return ["main"]
 
-def render_slides_html(repo_name, branch, path):
-    try:
-        repo = gh_client.get_repo(repo_name)
-        content = repo.get_contents(path, ref=branch).decoded_content.decode("utf-8")
-        uid = str(uuid.uuid4())[:8]
-        work_dir, out_dir = f"work_{uid}", f"site_{uid}"
-        os.makedirs(work_dir, exist_ok=True)
-        with open(f"{work_dir}/index.md", "w") as f: f.write(content)
-        subprocess.run(["mkslides", "build", work_dir, "--site-dir", out_dir])
-        if os.path.exists(f"{out_dir}/index.html"):
-            return f'<iframe src="/file={os.path.abspath(out_dir)}/index.html" width="100%" height="600px"></iframe>'
-        return "Rendering failed."
-    except Exception as e: return str(e)
-
-# --- FastAPI Setup ---
-api_app = FastAPI()
-
-class AnalysisRequest(BaseModel):
-    theme: str
-    profile: str
-    num_personas: int = 1
-    url: str
-
-@api_app.get("/health")
-def health():
-    return {"status": "running", "timestamp": datetime.now().isoformat()}
-
-@api_app.post("/api/start_analysis")
-def start_analysis_api(req: AnalysisRequest):
+def api_start_analysis(theme, profile, num, url):
+    if not JULES_API_KEY: return {"error": "No API Key"}
     report_id = str(uuid.uuid4())[:8]
-    tasks = generate_tasks(req.theme, req.profile)
-    personas = generate_personas(req.theme, req.profile, req.num_personas)
-    session = initiate_jules_session(personas[0], tasks, req.url, report_id)
-    return {"report_id": report_id, "session": session}
+    try:
+        with open("jules_template.md", "r") as f: template = f.read()
+        persona = {"name": "Auditor", "minibio": f"Expert for {theme}", "persona": {"profile": profile}}
+        tasks = [f"Audit {theme} at {url}"]
+        prompt = template.replace("{{persona_context}}", json.dumps(persona)).replace("{{tasks_list}}", json.dumps(tasks)).replace("{{url}}", url).replace("{{report_id}}", report_id).replace("{{blablador_api_key}}", BLABLADOR_API_KEY or "")
 
-@api_app.get("/api/results/{report_id}")
-def get_results_api(report_id: str):
-    branches = get_repo_branches(REPO_NAME)
-    for b in branches[:30]:
-        reports = get_reports_in_branch(REPO_NAME, b, filter_type="report")
-        for r in reports:
-            if report_id in r:
-                content = gh_client.get_repo(REPO_NAME).get_contents(r, ref=b).decoded_content.decode("utf-8")
-                slides = get_reports_in_branch(REPO_NAME, b, filter_type="slides")
-                slides_html = render_slides_html(REPO_NAME, b, slides[0]) if slides else "No slides found"
-                return {"status": "ready", "report_md": content, "slides_html": slides_html}
-    return {"status": "pending"}
+        headers = {"X-Goog-Api-Key": JULES_API_KEY, "Content-Type": "application/json"}
+        data = {
+            "prompt": prompt,
+            "sourceContext": {"source": f"sources/github/{REPO_NAME}", "githubRepoContext": {"startingBranch": "main"}},
+            "automationMode": "AUTO_CREATE_PR",
+            "title": f"AUX ANALYSIS [{report_id}]"
+        }
+        resp = requests.post(f"{JULES_API_URL}/sessions", headers=headers, json=data)
+        return {"report_id": report_id, "session": resp.json()}
+    except Exception as e:
+        return {"error": str(e)}
 
-# --- Gradio Interface ---
-with gr.Blocks(title="AUX ANALYSIS BACKEND") as demo:
+def api_get_results(report_id, branch_manual):
+    if not gh_client: init_gh()
+    setup_mkslides()
+    work_dir = None
+    out_dir = None
+    try:
+        repo = gh_client.get_repo(REPO_NAME)
+        branches = [branch_manual] if branch_manual and branch_manual != "Auto-detect" else api_get_branches()[:10]
+        for b in branches:
+            try:
+                tree = repo.get_git_tree(b, recursive=True).tree
+                reports = [e.path for e in tree if report_id in e.path and e.path.endswith(".md") and "slides/" not in e.path]
+                if reports:
+                    content = repo.get_contents(reports[0], ref=b).decoded_content.decode("utf-8")
+
+                    # Slides
+                    slide_files = sorted([e.path for e in tree if e.path.startswith("user_experience_reports/slides/") and e.path.endswith(".md")])
+                    slides_html = ""
+                    if slide_files:
+                        uid = str(uuid.uuid4())[:8]
+                        work_dir, out_dir = f"work_{uid}", f"site_{uid}"
+                        os.makedirs(work_dir, exist_ok=True)
+                        for sf in slide_files:
+                            sc = repo.get_contents(sf, ref=b).decoded_content.decode("utf-8")
+                            with open(os.path.join(work_dir, os.path.basename(sf)), "w") as f: f.write(sc)
+
+                        subprocess.run([sys.executable, "-m", "mkslides", "build", work_dir, "--site-dir", out_dir], check=False)
+                        if os.path.exists(f"{out_dir}/index.html"):
+                            with open(f"{out_dir}/index.html", "r") as f: slides_html = f.read()
+
+                    return {"status": "ready", "branch": b, "report_md": content, "slides_html": slides_html}
+            except: continue
+        return {"status": "pending"}
+    except Exception as e:
+        return {"error": str(e)}
+    finally:
+        if work_dir and os.path.exists(work_dir): shutil.rmtree(work_dir)
+        if out_dir and os.path.exists(out_dir): shutil.rmtree(out_dir)
+
+with gr.Blocks() as demo:
     gr.Markdown("# AUX ANALYSIS BACKEND")
-    gr.Markdown("This space orchestrates AI-driven UX audits.")
 
     with gr.Row():
-        status_json = gr.JSON(label="System Status", value={"api": "online", "github": "init..."})
-        test_gh_btn = gr.Button("Test GitHub Connection")
+        b_btn = gr.Button("Get Branches")
+        b_out = gr.JSON()
+        b_btn.click(api_get_branches, outputs=b_out, api_name="get_branches")
 
-    gh_output = gr.Markdown()
-    test_gh_btn.click(init_gh, outputs=[gh_output])
-    demo.load(init_gh, outputs=[gh_output])
+    with gr.Row():
+        t1 = gr.Textbox(label="Theme")
+        t2 = gr.Textbox(label="Profile")
+        n1 = gr.Number(label="Personas")
+        t3 = gr.Textbox(label="URL")
+        s_btn = gr.Button("Start Analysis")
+        s_out = gr.JSON()
+        s_btn.click(api_start_analysis, inputs=[t1, t2, n1, t3], outputs=s_out, api_name="start_analysis")
 
-# --- Mount Gradio onto FastAPI ---
-app = gr.mount_gradio_app(api_app, demo, path="/")
+    with gr.Row():
+        r1 = gr.Textbox(label="Report ID")
+        r2 = gr.Textbox(label="Branch")
+        r_btn = gr.Button("Get Results")
+        r_out = gr.JSON()
+        r_btn.click(api_get_results, inputs=[r1, r2], outputs=r_out, api_name="get_results")
 
-if __name__ == "__main__":
-    import uvicorn
-    # Use 7860 for HF compatibility
-    uvicorn.run(app, host="0.0.0.0", port=7860)
+init_gh()
+demo.launch()
