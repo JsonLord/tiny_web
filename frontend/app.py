@@ -4,6 +4,7 @@ import json
 import os
 import time
 import base64
+import traceback
 
 # Styling
 CSS = """
@@ -20,38 +21,38 @@ iframe { border: 1px solid #30363d; border-radius: 8px; background: white; }
 # State
 SESSION_STATE = {
     "report_id": None,
-    "backend_url": "harvesthealth/xxg_backup",
+    "backend_url": "https://harvesthealth-xxg-backup.hf.space",
     "token": None
 }
 
 def get_client():
-    try:
-        return Client(SESSION_STATE["backend_url"], hf_token=SESSION_STATE["token"])
-    except:
-        return None
+    url = SESSION_STATE["backend_url"]
+    token = SESSION_STATE["token"] if SESSION_STATE["token"] else None
+    # If URL is a space name like 'user/space', Client handles it.
+    # If it's a full URL, it also handles it.
+    return Client(url, hf_token=token)
 
 def run_diagnostic():
-    client = get_client()
-    if not client: return {"error": "Connection failed."}
     try:
-        return client.predict(api_name="/get_branches")
+        client = get_client()
+        res = client.predict(api_name="/get_branches")
+        return {"status": "Connected", "branches": res}
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": str(e), "trace": traceback.format_exc()}
 
 def fetch_branches():
-    client = get_client()
-    if not client: return ["main"]
     try:
+        client = get_client()
         branches = client.predict(api_name="/get_branches")
-        return ["Auto-detect"] + branches
-    except:
-        return ["Auto-detect", "main"]
+        return gr.update(choices=["Auto-detect"] + branches)
+    except Exception as e:
+        return gr.update(choices=["Auto-detect", "Error: " + str(e)])
 
 def launch_audit(theme, profile, num, url):
-    client = get_client()
-    if not client: return gr.update(visible=False), None, "Error: Backend unreachable."
     try:
+        client = get_client()
         res = client.predict(theme, profile, num, url, api_name="/start_analysis")
+        # Backend returns a dictionary
         rid = res.get("report_id")
         if rid:
             SESSION_STATE["report_id"] = rid
@@ -61,28 +62,27 @@ def launch_audit(theme, profile, num, url):
         return gr.update(visible=False), None, f"Error: {str(e)}"
 
 def refresh_portal(rid, branch):
-    client = get_client()
-    if not client: return "ERROR", "Client error", "...", None
     try:
+        client = get_client()
         res = client.predict(rid, branch, api_name="/get_results")
         if res.get("status") == "ready":
             md = res.get("report_md")
             html = res.get("slides_html")
             found_b = res.get("branch")
 
-            if "<html>" in html.lower():
+            if html and "<html>" in html.lower():
                 b64 = base64.b64encode(html.encode('utf-8')).decode('utf-8')
                 slides_iframe = f'<iframe src="data:text/html;base64,{b64}" width="100%" height="600px"></iframe>'
             else:
-                slides_iframe = f"<div>{html}</div>"
+                slides_iframe = f"<div>{html if html else 'No slides rendered.'}</div>"
 
             badge = '<span class="status-badge badge-ready">READY</span>'
             return badge, md, slides_iframe, f"Found in branch: `{found_b}`"
 
         badge = '<span class="status-badge badge-pending">PENDING</span>'
-        return badge, "Waiting for agent...", "...", "*Scanning branches...*"
+        return badge, "Waiting for agent to complete analysis...", "...", "*Scanning branches...*"
     except Exception as e:
-        return "ERROR", str(e), "...", None
+        return "ERROR", f"Failed to fetch: {str(e)}", "...", None
 
 with gr.Blocks(css=CSS, title="AUX ANALYSIS") as demo:
     gr.Markdown("# 🛡️ AUX ANALYSIS")
@@ -91,12 +91,12 @@ with gr.Blocks(css=CSS, title="AUX ANALYSIS") as demo:
         with gr.Tab("Launch Audit", id=0):
             with gr.Row():
                 with gr.Column(scale=2):
-                    theme = gr.Textbox(label="Theme", placeholder="E-commerce Checkout")
-                    profile = gr.Textbox(label="User Profile", placeholder="Busy parents")
-                    url = gr.Textbox(label="URL", value="https://www.harvesthealth.life")
+                    theme_in = gr.Textbox(label="Theme", placeholder="E-commerce Checkout")
+                    profile_in = gr.Textbox(label="User Profile", placeholder="Busy parents")
+                    url_in = gr.Textbox(label="URL", value="https://www.harvesthealth.life")
                 with gr.Column(scale=1):
-                    num = gr.Slider(1, 5, 1, step=1, label="Personas")
-                    launch_btn = gr.Button("🚀 Start", variant="primary")
+                    num_in = gr.Slider(1, 5, 1, step=1, label="Personas")
+                    launch_btn = gr.Button("🚀 Start Audit", variant="primary")
 
             with gr.Row(visible=False) as status_row:
                 status_md = gr.Markdown()
@@ -114,26 +114,33 @@ with gr.Blocks(css=CSS, title="AUX ANALYSIS") as demo:
                 active_branch = gr.Markdown()
 
             with gr.Row():
-                with gr.Tab("Report"):
-                    report_out = gr.Markdown()
-                with gr.Tab("Slides"):
-                    slides_out = gr.HTML()
+                with gr.Tab("Strategic Report"):
+                    report_out = gr.Markdown("No report loaded.")
+                with gr.Tab("Interactive Slides"):
+                    slides_out = gr.HTML("Slides will appear here.")
 
         with gr.Tab("Settings"):
-            b_url = gr.Textbox(label="Backend Space", value=SESSION_STATE["backend_url"])
-            h_token = gr.Textbox(label="Token (Optional)", type="password")
-            save_btn = gr.Button("Save")
-            diag_btn = gr.Button("Test Connection")
-            diag_out = gr.JSON()
+            with gr.Group():
+                b_url = gr.Textbox(label="Backend Space URL / ID", value=SESSION_STATE["backend_url"])
+                h_token = gr.Textbox(label="HF Token (Optional)", type="password")
+                save_btn = gr.Button("Save Configuration")
+
+            diag_btn = gr.Button("🔍 Test Backend Connection")
+            diag_out = gr.JSON(label="Diagnostic Log")
 
     # Events
-    save_btn.click(lambda u, t: SESSION_STATE.update({"backend_url": u, "token": t}), [b_url, h_token])
+    def save_config(u, t):
+        SESSION_STATE["backend_url"] = u
+        SESSION_STATE["token"] = t
+        return f"✅ Config saved. Target: {u}"
+
+    save_btn.click(save_config, [b_url, h_token], diag_out)
     diag_btn.click(run_diagnostic, outputs=diag_out)
 
-    launch_btn.click(launch_audit, [theme, profile, num, url], [status_row, rid_input, status_md])
+    launch_btn.click(launch_audit, [theme_in, profile_in, num_in, url_in], [status_row, rid_input, status_md])
     portal_btn.click(lambda: gr.Tabs(selected=1), outputs=main_tabs)
 
-    refresh_b.click(lambda: gr.update(choices=fetch_branches()), outputs=branch_select)
+    refresh_b.click(fetch_branches, outputs=branch_select)
     fetch_btn.click(refresh_portal, [rid_input, branch_select], [status_badge, report_out, slides_out, active_branch])
 
 if __name__ == "__main__":
