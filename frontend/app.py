@@ -22,34 +22,50 @@ iframe { border: 1px solid #30363d; border-radius: 8px; background: white; }
 SESSION_STATE = {
     "report_id": None,
     "backend_url": "harvesthealth/xxg_backup",
-    "token": None
+    "token": os.environ.get("HF_TOKEN")
 }
 
 def get_client():
     url = SESSION_STATE["backend_url"]
-    token = SESSION_STATE["token"] if SESSION_STATE["token"] else None
+    # Prioritize session state token (if user entered one) else use env secret
+    token = SESSION_STATE["token"] or os.environ.get("HF_TOKEN")
+
+    # Standard authentication check
     try:
-        # Try modern argument name (gradio_client >= 1.0)
+        # Newer gradio_client versions use 'token'
         return Client(url, token=token)
     except TypeError:
-        # Fallback for older gradio_client versions
+        # Older versions used 'hf_token'
         return Client(url, hf_token=token)
 
 def run_diagnostic():
+    diag = {
+        "backend_target": SESSION_STATE["backend_url"],
+        "token_provided": SESSION_STATE["token"] is not None,
+        "env_hf_token_exists": os.environ.get("HF_TOKEN") is not None
+    }
     try:
         client = get_client()
         res = client.predict(api_name="/get_branches")
-        return {"status": "Connected", "branches": res}
+        diag["status"] = "Connected"
+        diag["branches_sample"] = res[:5] if isinstance(res, list) else res
+        return diag
     except Exception as e:
-        return {"error": str(e), "trace": traceback.format_exc()}
+        diag["status"] = "Connection Failed"
+        diag["error_type"] = type(e).__name__
+        diag["error_msg"] = str(e)
+        diag["trace"] = traceback.format_exc()
+        return diag
 
 def fetch_branches():
     try:
         client = get_client()
         branches = client.predict(api_name="/get_branches")
-        return gr.update(choices=["Auto-detect"] + branches)
+        if isinstance(branches, list):
+            return gr.update(choices=["Auto-detect"] + branches)
+        return gr.update(choices=["Auto-detect", "Unexpected response format"])
     except Exception as e:
-        return gr.update(choices=["Auto-detect", "Error: " + str(e)])
+        return gr.update(choices=["Auto-detect", f"Error: {str(e)}"])
 
 def launch_audit(theme, profile, num, url):
     try:
@@ -129,8 +145,8 @@ with gr.Blocks(css=CSS, title="AUX ANALYSIS") as demo:
 
         with gr.Tab("Settings"):
             with gr.Group():
-                b_url = gr.Textbox(label="Backend Space URL / ID", value=SESSION_STATE["backend_url"])
-                h_token = gr.Textbox(label="HF Token (Optional)", type="password")
+                b_url = gr.Textbox(label="Backend Space ID", value=SESSION_STATE["backend_url"])
+                h_token = gr.Textbox(label="HF Token (Optional override)", type="password", placeholder="Will use HF_TOKEN secret if left blank")
                 save_btn = gr.Button("Save Configuration")
 
             diag_btn = gr.Button("🔍 Test Backend Connection")
@@ -139,8 +155,8 @@ with gr.Blocks(css=CSS, title="AUX ANALYSIS") as demo:
     # Events
     def save_config(u, t):
         SESSION_STATE["backend_url"] = u
-        SESSION_STATE["token"] = t
-        return f"✅ Config saved. Target: {u}"
+        SESSION_STATE["token"] = t if t else os.environ.get("HF_TOKEN")
+        return f"✅ Config updated. Target: {u}"
 
     save_btn.click(save_config, [b_url, h_token], diag_out)
     diag_btn.click(run_diagnostic, outputs=diag_out)
