@@ -5,6 +5,7 @@ import os
 import time
 import base64
 import traceback
+import inspect
 
 # Styling
 CSS = """
@@ -27,15 +28,11 @@ SESSION_STATE = {
 
 def get_client():
     url = SESSION_STATE["backend_url"]
-    # Prioritize session state token (if user entered one) else use env secret
     token = SESSION_STATE["token"] or os.environ.get("HF_TOKEN")
-
-    # Standard authentication check
-    try:
-        # Newer gradio_client versions use 'token'
+    sig = inspect.signature(Client.__init__)
+    if "token" in sig.parameters:
         return Client(url, token=token)
-    except TypeError:
-        # Older versions used 'hf_token'
+    else:
         return Client(url, hf_token=token)
 
 def run_diagnostic():
@@ -52,10 +49,35 @@ def run_diagnostic():
         return diag
     except Exception as e:
         diag["status"] = "Connection Failed"
-        diag["error_type"] = type(e).__name__
         diag["error_msg"] = str(e)
         diag["trace"] = traceback.format_exc()
         return diag
+
+def full_system_test():
+    logs = ["--- Starting Full System Test ---"]
+    try:
+        client = get_client()
+        logs.append("Step 1: Initiating Analysis...")
+        res_start = client.predict(
+            "Brand communication",
+            "Coffee and yoga enthusiast clientele",
+            1,
+            "https://lumaya.co/berlin/events/sunday-yoga-coffee-club-for-women/",
+            api_name="/start_analysis"
+        )
+        data = json.loads(res_start) if isinstance(res_start, str) else res_start
+        rid = data.get("report_id")
+        logs.append(f"SUCCESS: Session created. ID: {rid}")
+
+        logs.append("Step 2: Checking Results Availability (Polling once)...")
+        res_res = client.predict(rid, "Auto-detect", api_name="/get_results")
+        status = json.loads(res_res).get("status") if isinstance(res_res, str) else res_res.get("status")
+        logs.append(f"SUCCESS: Polled status: {status}")
+        logs.append("Test Complete.")
+        return "\n".join(logs)
+    except Exception as e:
+        logs.append(f"FAILED: {str(e)}")
+        return "\n".join(logs)
 
 def fetch_branches():
     try:
@@ -71,9 +93,7 @@ def launch_audit(theme, profile, num, url):
     try:
         client = get_client()
         res = client.predict(theme, profile, num, url, api_name="/start_analysis")
-        if isinstance(res, str):
-            res = json.loads(res)
-
+        if isinstance(res, str): res = json.loads(res)
         rid = res.get("report_id")
         if rid:
             SESSION_STATE["report_id"] = rid
@@ -86,23 +106,18 @@ def refresh_portal(rid, branch):
     try:
         client = get_client()
         res = client.predict(rid, branch, api_name="/get_results")
-        if isinstance(res, str):
-            res = json.loads(res)
-
+        if isinstance(res, str): res = json.loads(res)
         if res.get("status") == "ready":
             md = res.get("report_md")
             html = res.get("slides_html")
             found_b = res.get("branch")
-
             if html and "<html>" in html.lower():
                 b64 = base64.b64encode(html.encode('utf-8')).decode('utf-8')
                 slides_iframe = f'<iframe src="data:text/html;base64,{b64}" width="100%" height="600px"></iframe>'
             else:
                 slides_iframe = f"<div>{html if html else 'No slides rendered.'}</div>"
-
             badge = '<span class="status-badge badge-ready">READY</span>'
             return badge, md, slides_iframe, f"Found in branch: `{found_b}`"
-
         badge = '<span class="status-badge badge-pending">PENDING</span>'
         return badge, "Waiting for agent to complete analysis...", "...", "*Scanning branches...*"
     except Exception as e:
@@ -115,9 +130,9 @@ with gr.Blocks(css=CSS, title="AUX ANALYSIS") as demo:
         with gr.Tab("Launch Audit", id=0):
             with gr.Row():
                 with gr.Column(scale=2):
-                    theme_in = gr.Textbox(label="Theme", placeholder="E-commerce Checkout")
-                    profile_in = gr.Textbox(label="User Profile", placeholder="Busy parents")
-                    url_in = gr.Textbox(label="URL", value="https://www.harvesthealth.life")
+                    theme_in = gr.Textbox(label="Theme", value="Brand communication")
+                    profile_in = gr.Textbox(label="User Profile", value="Coffee and yoga enthusiast clientele")
+                    url_in = gr.Textbox(label="URL", value="https://lumaya.co/berlin/events/sunday-yoga-coffee-club-for-women/")
                 with gr.Column(scale=1):
                     num_in = gr.Slider(1, 5, 1, step=1, label="Personas")
                     launch_btn = gr.Button("🚀 Start Audit", variant="primary")
@@ -146,20 +161,25 @@ with gr.Blocks(css=CSS, title="AUX ANALYSIS") as demo:
         with gr.Tab("Settings"):
             with gr.Group():
                 b_url = gr.Textbox(label="Backend Space ID", value=SESSION_STATE["backend_url"])
-                h_token = gr.Textbox(label="HF Token (Optional override)", type="password", placeholder="Will use HF_TOKEN secret if left blank")
+                h_token = gr.Textbox(label="HF Token (Optional override)", type="password")
                 save_btn = gr.Button("Save Configuration")
 
-            diag_btn = gr.Button("🔍 Test Backend Connection")
+            with gr.Row():
+                diag_btn = gr.Button("🔍 Test Backend Connection")
+                test_btn = gr.Button("⚙️ Run Full System Test")
+
             diag_out = gr.JSON(label="Diagnostic Log")
+            test_out = gr.Code(label="System Test Execution Log", language="markdown")
 
     # Events
     def save_config(u, t):
         SESSION_STATE["backend_url"] = u
-        SESSION_STATE["token"] = t if t else os.environ.get("HF_TOKEN")
+        if t: SESSION_STATE["token"] = t
         return f"✅ Config updated. Target: {u}"
 
     save_btn.click(save_config, [b_url, h_token], diag_out)
     diag_btn.click(run_diagnostic, outputs=diag_out)
+    test_btn.click(full_system_test, outputs=test_out)
 
     launch_btn.click(launch_audit, [theme_in, profile_in, num_in, url_in], [status_row, rid_input, status_md])
     portal_btn.click(lambda: gr.Tabs(selected=1), outputs=main_tabs)

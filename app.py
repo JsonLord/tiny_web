@@ -13,6 +13,10 @@ import gradio as gr
 import requests
 from github import Github, Auth
 
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Configuration
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 JULES_API_KEY = os.environ.get("JULES_API_KEY")
