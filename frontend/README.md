@@ -1,6 +1,6 @@
 ---
-title: DeskAgent Frontend
-emoji: 🖥️
+title: AUX ANALYSIS
+emoji: 🛡️
 colorFrom: purple
 colorTo: pink
 sdk: gradio
@@ -10,7 +10,7 @@ python_version: "3.10"
 pinned: false
 ---
 
-# DeskAgent UX Analysis Frontend
+# AUX ANALYSIS
 
 A beautiful, high-performance interface for AI-driven UX audits.
 

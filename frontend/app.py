@@ -21,16 +21,14 @@ iframe { border: 1px solid #30363d; border-radius: 8px; background: white; }
 # State
 SESSION_STATE = {
     "report_id": None,
-    "backend_url": "https://harvesthealth-xxg-backup.hf.space",
+    "backend_url": "harvesthealth/xxg_backup",
     "token": None
 }
 
 def get_client():
     url = SESSION_STATE["backend_url"]
     token = SESSION_STATE["token"] if SESSION_STATE["token"] else None
-    # If URL is a space name like 'user/space', Client handles it.
-    # If it's a full URL, it also handles it.
-    return Client(url, hf_token=token)
+    return Client(url, token=token)
 
 def run_diagnostic():
     try:
@@ -52,7 +50,9 @@ def launch_audit(theme, profile, num, url):
     try:
         client = get_client()
         res = client.predict(theme, profile, num, url, api_name="/start_analysis")
-        # Backend returns a dictionary
+        if isinstance(res, str):
+            res = json.loads(res)
+
         rid = res.get("report_id")
         if rid:
             SESSION_STATE["report_id"] = rid
@@ -65,6 +65,9 @@ def refresh_portal(rid, branch):
     try:
         client = get_client()
         res = client.predict(rid, branch, api_name="/get_results")
+        if isinstance(res, str):
+            res = json.loads(res)
+
         if res.get("status") == "ready":
             md = res.get("report_md")
             html = res.get("slides_html")

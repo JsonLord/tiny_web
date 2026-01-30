@@ -1,3 +1,4 @@
 gradio==4.44.1
+gradio_client
 requests
 huggingface-hub==0.25.2
