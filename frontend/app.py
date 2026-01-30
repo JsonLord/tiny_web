@@ -28,7 +28,12 @@ SESSION_STATE = {
 def get_client():
     url = SESSION_STATE["backend_url"]
     token = SESSION_STATE["token"] if SESSION_STATE["token"] else None
-    return Client(url, token=token)
+    try:
+        # Try modern argument name (gradio_client >= 1.0)
+        return Client(url, token=token)
+    except TypeError:
+        # Fallback for older gradio_client versions
+        return Client(url, hf_token=token)
 
 def run_diagnostic():
     try:
