@@ -22,34 +22,6 @@ You will simulate a persona performing tasks, but the final output must read lik
 
 ## 2. OPERATIONAL GUIDELINES (UNCHANGED – STRICT)
 
-### Setup (MANDATORY)
-
-Clone TinyTroupe:
-
-```bash
-git clone -b fix/jules-final-submission-branch https://github.com/JsonLord/TinyTroupe.git external/TinyTroupe
-````
-
-Set environment variables:
-
-* BLABLADOR_API_KEY: {{blablador_api_key}}
-* OPENAI_API_KEY: {{blablador_api_key}}
-
-Python configuration:
-
-```python
-import sys
-import os
-sys.path.append(os.path.abspath("external/TinyTroupe"))
-
-from tinytroupe import config_manager
-config_manager.update("api_type", "helmholtz-blablador")
-config_manager.update("model", "alias-large")
-config_manager.update("reasoning_model", "alias-large")
-```
-
----
-
 ### Browser Control
 
 * Use ONLY browser_actions.
@@ -68,7 +40,7 @@ For EVERY action:
 * Screenshot
 * Visual reflection (layout, hierarchy, accessibility)
 
-Then pass logs through TinyStyler into persona voice.
+**You must apply the persona voice directly to all logs and reports.** Do not use external styling tools.
 
 Persona language is REQUIRED.
 
@@ -114,6 +86,18 @@ This must be a BUSINESS PRESENTATION DOCUMENT.
 ---
 
 ### REQUIRED SECTIONS
+
+1. Executive Summary
+2. Persona as Decision Instrument
+3. Task Journey Highlights
+4. UX Failure Map
+5. Evidence-Based UX Diagnosis
+6. Priority Matrix
+7. ROI & Product Economics
+8. 30–60–90 Day Roadmap
+9. Visual Strategy
+10. Accessibility Snapshot
+11. Strategic Summary
 
 ---
 
@@ -297,13 +281,17 @@ This is not a design project.
 
 This is a revenue enablement and trust infrastructure initiative.
 
+---
+
 ## 30–60–90 Day Roadmap
 
 Concrete actions.
 
 ---
 
-## Visual Strategy (NO RAW HTML)
+## Visual Strategy
+
+**MANDATORY: Provide a visual layout strategy for the proposed improvements.**
 
 DO NOT embed HTML.
 
@@ -312,6 +300,9 @@ Instead produce:
 * Annotated wireframe blocks
 * Layout diagrams
 * Component cards
+
+| Component | Strategy | Expected Impact |
+|-----------|----------|-----------------|
 
 Example:
 
@@ -333,7 +324,10 @@ Example:
 
 ## Accessibility Snapshot
 
-WCAG risks with severity.
+**MANDATORY: Diagnose WCAG violations.**
+
+| Area | Issue | Severity | WCAG Guideline | Fix |
+|------|-------|----------|----------------|-----|
 
 ---
 
@@ -376,26 +370,6 @@ For best rendering in the orchestrator app:
    - Use `:::card` blocks for specific recommendations or quotes.
 4. **Formatting**: Do NOT include `---` separators within these individual files. The orchestrator will automatically merge them into a single presentation.
 5. **Title Slide**: You may optionally include `00_title.md` with an `# H1` title.
-
----
-
-### mkslides Integration (MANDATORY)
-
-Clone:
-
-```bash
-git clone --recursive https://github.com/MartenBE/mkslides.git external/mkslides
-cd external/mkslides
-# Ensure compatibility
-sed -i 's/requires-python = ">=3.13"/requires-python = ">=3.12"/' pyproject.toml
-pip install .
-```
-
-Then render:
-
-```bash
-mkslides build ../user_experience_reports/slides/ --site-dir ../user_experience_reports/slides_rendered/
-```
 
 ---
 
