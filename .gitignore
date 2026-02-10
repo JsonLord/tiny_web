@@ -1,0 +1,7 @@
+.git/
+external/
+__pycache__/
+*.pyc
+app_output.log
+*.png
+verification/
