@@ -34,24 +34,6 @@ def init_gh():
         except: return False
     return False
 
-MKSLIDES_READY = False
-def setup_mkslides():
-    global MKSLIDES_READY
-    if MKSLIDES_READY: return
-    try:
-        if not os.path.exists("external/mkslides"):
-            os.makedirs("external", exist_ok=True)
-            subprocess.run(["git", "clone", "--recursive", "https://github.com/MartenBE/mkslides.git", "external/mkslides"], check=True)
-            pyproject = "external/mkslides/pyproject.toml"
-            if os.path.exists(pyproject):
-                with open(pyproject, "r") as f: content = f.read()
-                content = re.sub(r'requires-python = ">=3.13"', 'requires-python = ">=3.10"', content)
-                with open(pyproject, "w") as f: f.write(content)
-            subprocess.run([sys.executable, "-m", "pip", "install", "./external/mkslides"], check=True)
-        MKSLIDES_READY = True
-    except Exception as e:
-        print(f"mkslides setup error: {e}")
-
 def api_get_branches():
     if not gh_client: init_gh()
     try:
@@ -67,7 +49,7 @@ def api_start_analysis(theme, profile, num, url):
         with open("jules_template.md", "r") as f: template = f.read()
         persona = {"name": "Auditor", "minibio": f"Expert for {theme}", "persona": {"profile": profile}}
         tasks = [f"Audit {theme} at {url}"]
-        prompt = template.replace("{{persona_context}}", json.dumps(persona)).replace("{{tasks_list}}", json.dumps(tasks)).replace("{{url}}", url).replace("{{report_id}}", report_id).replace("{{blablador_api_key}}", BLABLADOR_API_KEY or "")
+        prompt = template.replace("{{persona_context}}", json.dumps(persona)).replace("{{tasks_list}}", json.dumps(tasks)).replace("{{url}}", url).replace("{{report_id}}", report_id)
 
         headers = {"X-Goog-Api-Key": JULES_API_KEY, "Content-Type": "application/json"}
         data = {
@@ -83,7 +65,6 @@ def api_start_analysis(theme, profile, num, url):
 
 def api_get_results(report_id, branch_manual):
     if not gh_client: init_gh()
-    setup_mkslides()
     work_dir = None
     out_dir = None
     try:

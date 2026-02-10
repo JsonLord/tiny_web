@@ -9,3 +9,4 @@ external/
 site/
 test_slides/
 __pycache__/
+user_experience_reports/slides_rendered/

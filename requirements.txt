@@ -1,3 +1,4 @@
 gradio
 PyGithub
 requests
+mkslides @ git+https://github.com/MartenBE/mkslides.git
