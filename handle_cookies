@@ -3,88 +3,63 @@ from gradio_client import Client
 client = Client("diamond-in/Browser-Use-mcp")
 ```
 
+---
 
-API name: /get_cookies Get all cookies from current domain
-copy
-from gradio_client import Client
+# 1. **/get_cookies**
+_Retrieve all cookies from the specified domain as a JSON string._
 
-client = Client("diamond-in/Browser-Use-mcp")
+### Parameters
+- `url` (str)
+- `use_persistent` (bool)
+
+### Code Snippet
+```python
 result = client.predict(
-	url="Hello!!",
-	use_persistent=False,
-	api_name="/get_cookies"
+    url="https://example.com",
+    use_persistent=False,
+    api_name="/get_cookies"
 )
 print(result)
-Accepts 2 parameters:
-url str Required
+```
 
-The input value that is provided in the "URL" Textbox component.
+---
 
-use_persistent bool Default: False
+# 2. **/set_cookies**
+_Inject cookies into the browser for a specific domain using a JSON formatted string._
 
-The input value that is provided in the "Use Persistent Browser" Checkbox component.
+### Parameters
+- `url` (str)
+- `cookies_json` (str)
+- `use_persistent` (bool)
 
-Returns 1 element
-str
-
-The output value that appears in the "Cookies (JSON)" Textbox component.
-  
-API name: /set_cookies Set cookies from JSON string
-copy
-from gradio_client import Client
-
-client = Client("diamond-in/Browser-Use-mcp")
+### Code Snippet
+```python
 result = client.predict(
-	url="Hello!!",
-	cookies_json="Hello!!",
-	use_persistent=False,
-	api_name="/set_cookies"
+    url="https://example.com",
+    cookies_json='[{"name": "test", "value": "123"}]',
+    use_persistent=False,
+    api_name="/set_cookies"
 )
 print(result)
-Accepts 3 parameters:
-url str Required
+```
 
-The input value that is provided in the "URL" Textbox component.
+---
 
-cookies_json str Required
+# 3. **/execute_js**
+_Run custom JavaScript code on the target page and return the execution result._
 
-The input value that is provided in the "Cookies JSON" Textbox component.
+### Parameters
+- `url` (str)
+- `script` (str)
+- `use_persistent` (bool)
 
-use_persistent bool Default: False
-
-The input value that is provided in the "Use Persistent Browser" Checkbox component.
-
-Returns 1 element
-str
-
-The output value that appears in the "Result" Textbox component
-
-API name: /execute_js Execute JavaScript on page Total requests: 1 (100% successful)  |  p50/p90/p99: 3.67 s / 3.67 s / 3.67 s
-copy
-from gradio_client import Client
-
-client = Client("diamond-in/Browser-Use-mcp")
+### Code Snippet
+```python
 result = client.predict(
-	url="https://example.com",
-	script="return {title: document.title, url: document.URL, links: document.links.length};",
-	use_persistent=False,
-	api_name="/execute_js"
+    url="https://example.com",
+    script="return {title: document.title, url: document.URL, links: document.links.length};",
+    use_persistent=False,
+    api_name="/execute_js"
 )
 print(result)
-Accepts 3 parameters:
-url str Default: "https://example.com"
-
-The input value that is provided in the "URL" Textbox component.
-
-script str Default: "return {title: document.title, url: document.URL, links: document.links.length};"
-
-The input value that is provided in the "JavaScript Code" Textbox component.
-
-use_persistent bool Default: False
-
-The input value that is provided in the "Use Persistent Browser" Checkbox component.
-
-Returns 1 element
-str
-
-The output value that appears in the "Result" Textbox component.
+```
