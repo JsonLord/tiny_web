@@ -1,0 +1,90 @@
+```python
+from gradio_client import Client
+client = Client("diamond-in/Browser-Use-mcp")
+```
+
+
+API name: /get_cookies Get all cookies from current domain
+copy
+from gradio_client import Client
+
+client = Client("diamond-in/Browser-Use-mcp")
+result = client.predict(
+	url="Hello!!",
+	use_persistent=False,
+	api_name="/get_cookies"
+)
+print(result)
+Accepts 2 parameters:
+url str Required
+
+The input value that is provided in the "URL" Textbox component.
+
+use_persistent bool Default: False
+
+The input value that is provided in the "Use Persistent Browser" Checkbox component.
+
+Returns 1 element
+str
+
+The output value that appears in the "Cookies (JSON)" Textbox component.
+  
+API name: /set_cookies Set cookies from JSON string
+copy
+from gradio_client import Client
+
+client = Client("diamond-in/Browser-Use-mcp")
+result = client.predict(
+	url="Hello!!",
+	cookies_json="Hello!!",
+	use_persistent=False,
+	api_name="/set_cookies"
+)
+print(result)
+Accepts 3 parameters:
+url str Required
+
+The input value that is provided in the "URL" Textbox component.
+
+cookies_json str Required
+
+The input value that is provided in the "Cookies JSON" Textbox component.
+
+use_persistent bool Default: False
+
+The input value that is provided in the "Use Persistent Browser" Checkbox component.
+
+Returns 1 element
+str
+
+The output value that appears in the "Result" Textbox component
+
+API name: /execute_js Execute JavaScript on page Total requests: 1 (100% successful)  |  p50/p90/p99: 3.67 s / 3.67 s / 3.67 s
+copy
+from gradio_client import Client
+
+client = Client("diamond-in/Browser-Use-mcp")
+result = client.predict(
+	url="https://example.com",
+	script="return {title: document.title, url: document.URL, links: document.links.length};",
+	use_persistent=False,
+	api_name="/execute_js"
+)
+print(result)
+Accepts 3 parameters:
+url str Default: "https://example.com"
+
+The input value that is provided in the "URL" Textbox component.
+
+script str Default: "return {title: document.title, url: document.URL, links: document.links.length};"
+
+The input value that is provided in the "JavaScript Code" Textbox component.
+
+use_persistent bool Default: False
+
+The input value that is provided in the "Use Persistent Browser" Checkbox component.
+
+Returns 1 element
+str
+
+The output value that appears in the "Result" Textbox component.
