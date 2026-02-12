@@ -1,0 +1,3 @@
+2026-02-12 10:30:46,989 - MainThread(140314744826752) - tinytroupe - DEBUG - TinyTroupe logging initialized
+2026-02-12 10:30:49,904 - MainThread(140314744826752) - root - INFO - Updated config: api_type = helmholtz-blablador
+2026-02-12 10:30:49,905 - MainThread(140314744826752) - root - INFO - Updated config: model = alias-fast
