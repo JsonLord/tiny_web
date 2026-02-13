@@ -1,0 +1,6 @@
+[submodule "integrations/TinyTroupe"]
+	path = integrations/TinyTroupe
+	url = https://github.com/JsonLord/TinyTroupe.git
+[submodule "integrations/mkslides"]
+	path = integrations/mkslides
+	url = https://github.com/MartenBE/mkslides.git
