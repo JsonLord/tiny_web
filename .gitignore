@@ -1,0 +1,8 @@
+user_experience_reports/slides_rendered/
+external/
+site/
+test_slides/
+__pycache__/
+slides_work_*
+slides_site_*
+mkslides-assets/
